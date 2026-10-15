@@ -354,13 +354,17 @@ def skill_doctor() -> None:
                 checks.append({"check": f"installed/{target}/{name}", "ok": True, "detail": "synced with canonical"})
     repo_skills = Path.cwd() / ".claude" / "skills"
     if repo_skills.is_dir():
-        # Only OUR skill names matter here; foreign skills in a shared
-        # .claude/skills collection are none of this tool's business.
+        # Only OUR skill names matter, and only when they actually diverge
+        # from the canonical copies (an in-sync copy is fine wherever it
+        # lives; foreign skills are none of this tool's business).
         for entry in sorted(path.name for path in repo_skills.iterdir() if path.is_dir() and path.name in SKILLS):
+            provenance = _installed_provenance(entry, repo_skills)
+            if provenance and provenance.get("source_checksum") == _source_checksum(entry):
+                continue
             checks.append({
                 "check": f"repo-copy/{entry}",
                 "ok": False,
-                "detail": "divergent copy under .claude/skills; canonicalize with `autoresearch skill install`",
+                "detail": "divergent copy under .claude/skills; canonicalize with `autoresearch skill update`",
             })
 
     required_roles = ("literature_extraction", "research_reasoning", "scientific_critic")
