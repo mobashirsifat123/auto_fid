@@ -8,7 +8,7 @@ def test_empty_database_migrates_idempotently(tmp_path):
     first = ResearchRepository(path, tmp_path / "artifacts")
     second = ResearchRepository(path, tmp_path / "artifacts")
     assert first.integrity_check() == "ok"
-    assert second.row("SELECT MAX(version) AS version FROM schema_migrations")["version"] == 10
+    assert second.row("SELECT MAX(version) AS version FROM schema_migrations")["version"] == 11
     assert second.row("SELECT name FROM sqlite_master WHERE type='table' AND name='api_events'") is not None
     tables = {row["name"] for row in second.rows("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"projects", "pipeline_runs", "pipeline_checkpoints", "papers", "paper_reviews", "evidence_claims", "research_gaps", "provider_usage", "artifacts", "novelty_candidates", "experiment_specs", "api_project_idempotency", "agent_sessions", "agent_messages", "agent_turns", "agent_tool_calls", "agent_permissions", "agent_events", "agent_artifact_refs", "reinvention_analyses"} <= tables
@@ -36,14 +36,14 @@ def test_upgrade_from_v1_and_v2_and_v3(tmp_path):
 
     repo = ResearchRepository(path, tmp_path / "artifacts")
     assert repo.integrity_check() == "ok"
-    assert repo.row("SELECT MAX(version) AS version FROM schema_migrations")["version"] == 10
+    assert repo.row("SELECT MAX(version) AS version FROM schema_migrations")["version"] == 11
     tables = {row["name"] for row in repo.rows("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "novelty_candidates" in tables
     assert "api_project_idempotency" in tables
     assert "reinvention_analyses" in tables
 
 
-def test_upgrade_from_v9_to_v10(tmp_path):
+def test_upgrade_from_v9_to_latest(tmp_path):
     """Realistic upgrade path: an existing v9 database must gain the
     methodology_freezes table and the new experiment_specs columns."""
     import sqlite3
@@ -63,6 +63,8 @@ def test_upgrade_from_v9_to_v10(tmp_path):
     connection.execute("ALTER TABLE experiment_specs DROP COLUMN gap_id")
     connection.execute("ALTER TABLE experiment_specs DROP COLUMN methodology_freeze_id")
     connection.execute("ALTER TABLE experiment_specs DROP COLUMN interpretation_rules_json")
+    connection.execute("DROP TABLE IF EXISTS project_budgets_v11_marker")
+    connection.execute("ALTER TABLE project_budgets DROP COLUMN token_ceiling")
     connection.execute("DELETE FROM schema_migrations WHERE version >= 10")
     connection.commit()
     connection.close()
@@ -70,9 +72,11 @@ def test_upgrade_from_v9_to_v10(tmp_path):
     upgraded = ResearchRepository(database, tmp_path / "artifacts")
     upgraded.migrate()
     version = upgraded.row("SELECT MAX(version) AS version FROM schema_migrations")["version"]
-    assert version == 10
+    assert version == 11
     tables = {row["name"] for row in upgraded.rows("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "methodology_freezes" in tables
     columns = {row["name"] for row in upgraded.rows("PRAGMA table_info(experiment_specs)")}
     assert {"gap_id", "methodology_freeze_id", "interpretation_rules_json"} <= columns
+    budget_columns = {row["name"] for row in upgraded.rows("PRAGMA table_info(project_budgets)")}
+    assert "token_ceiling" in budget_columns
     assert upgraded.integrity_check() == "ok"

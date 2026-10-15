@@ -77,9 +77,18 @@ Verify role assignments with:
 autoresearch skill doctor
 ```
 
-Cost limits: `--max-cost-usd` sets a durable, project-scoped provider-cost
-hard stop enforced by the router. It bounds model spend only — it is not an
-execution-resource quota.
+Cost limits (both durable, project-scoped, enforced by the router on every
+call):
+- `--max-cost-usd` — provider-cost hard stop in USD.
+- `--max-tokens` — aggregate token ceiling (prompt + completion) across all
+  provider calls, independent of pricing; a runaway reasoning model stops
+  the project instead of the bill.
+
+Throughput knobs live in the provider config (`concurrency`,
+`requests_per_second`; HTTP 429 + Retry-After are retried with backoff
+automatically). Per-call output is bounded by `max_output_tokens` per model
+role (truncation self-heals by doubling); reasoning models get long
+read/total timeouts by default so slow thinking is not retried.
 
 ## First run (offline example, no API key)
 
@@ -176,7 +185,7 @@ shipped inside the package.
 ## Verification status
 
 - Deterministic offline test suite (clean checkout):
-  `pip install -e ".[dev]" && pytest` — **115 passed / 1 skipped** at release;
+  `pip install -e ".[dev]" && pytest` — **123 passed / 1 skipped** at release;
   the single skip is the opt-in live-provider test
   (`RUN_LIVE_AUTORESEARCH_TESTS=1` enables paid/network verification).
   Maintainers additionally run an extended private suite covering the

@@ -70,6 +70,7 @@ class WorkflowService:
         limit: int = 20,
         top_k: int = 5,
         max_cost_usd: float | None = None,
+        max_total_tokens: int | None = None,
         max_revisions: int = 0,
     ) -> dict[str, Any]:
         if until not in _STAGE_ORDER:
@@ -91,11 +92,14 @@ class WorkflowService:
             project = discovery.project_id
             record("discovery", "completed", project_id=project, run_id=discovery.run_id, papers=discovery.retrieved)
 
-        # The provider-cost budget is project-scoped durable state: set it once
+        # The provider budget is project-scoped durable state: set it once
         # here so it binds resume invocations and every later stage, not only
-        # the discovery/review services that also accept it.
-        if max_cost_usd is not None:
-            self.repository.set_project_budget(project, hard_stop=max_cost_usd)
+        # the discovery/review services that also accept it. None preserves
+        # the existing setting for that dimension.
+        if max_cost_usd is not None or max_total_tokens is not None:
+            self.repository.set_project_budget(
+                project, hard_stop=max_cost_usd, token_ceiling=max_total_tokens,
+            )
 
         gap = self._completed_gap(project)
         if gap is not None:

@@ -51,7 +51,7 @@ from autoresearch.domain.models import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class ResearchRepository:
@@ -112,6 +112,9 @@ class ResearchRepository:
             if current < 10:
                 connection.executescript(_SCHEMA_V10)
                 connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (10, utc_now()))
+            if current < 11:
+                connection.executescript(_SCHEMA_V11)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (11, utc_now()))
             latest = int(connection.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0])
             if latest != SCHEMA_VERSION:
                 raise RuntimeError(f"Unsupported database schema v{latest}; expected v{SCHEMA_VERSION}.")
@@ -418,8 +421,26 @@ class ResearchRepository:
         row = self.row("SELECT COALESCE(SUM(estimated_cost),0) AS total FROM provider_usage WHERE project_id=?", (project_id,))
         return float(row["total"] if row else 0.0)
 
-    def set_project_budget(self, project_id: str, *, hard_stop: float | None, currency: str = "USD") -> None:
-        self.execute("INSERT INTO project_budgets(project_id,hard_stop,currency,updated_at) VALUES(?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET hard_stop=excluded.hard_stop,currency=excluded.currency,updated_at=excluded.updated_at", (project_id, hard_stop, currency, utc_now()))
+    def provider_tokens(self, project_id: str) -> int:
+        row = self.row(
+            "SELECT COALESCE(SUM(COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)),0) AS tokens"
+            " FROM provider_usage WHERE project_id=?",
+            (project_id,),
+        )
+        return int(row["tokens"] if row else 0)
+
+    def set_project_budget(self, project_id: str, *, hard_stop: float | None = None, currency: str = "USD", token_ceiling: int | None = None) -> None:
+        """Set the durable project budget. A ``None`` value PRESERVES the
+        existing setting (so a cost-only invocation does not wipe a token
+        ceiling, and vice versa); pass an explicit value to change it."""
+        existing = self.get_project_budget(project_id) or {}
+        effective_hard_stop = hard_stop if hard_stop is not None else existing.get("hard_stop")
+        effective_ceiling = token_ceiling if token_ceiling is not None else existing.get("token_ceiling")
+        self.execute(
+            "INSERT INTO project_budgets(project_id,hard_stop,currency,token_ceiling,updated_at) VALUES(?,?,?,?,?)"
+            " ON CONFLICT(project_id) DO UPDATE SET hard_stop=excluded.hard_stop,currency=excluded.currency,token_ceiling=excluded.token_ceiling,updated_at=excluded.updated_at",
+            (project_id, effective_hard_stop, currency, effective_ceiling, utc_now()),
+        )
 
     def get_project_budget(self, project_id: str) -> dict[str, Any] | None:
         return self.row("SELECT * FROM project_budgets WHERE project_id=?", (project_id,))
@@ -1404,4 +1425,8 @@ CREATE INDEX IF NOT EXISTS methodology_project_idx ON methodology_freezes(projec
 ALTER TABLE experiment_specs ADD COLUMN gap_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE experiment_specs ADD COLUMN methodology_freeze_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE experiment_specs ADD COLUMN interpretation_rules_json TEXT NOT NULL DEFAULT '[]';
+"""
+
+_SCHEMA_V11 = """
+ALTER TABLE project_budgets ADD COLUMN token_ceiling INTEGER;
 """

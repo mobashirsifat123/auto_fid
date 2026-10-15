@@ -44,6 +44,7 @@ from autoresearch.domain.models import (
     NoveltyCandidate,
     ResearchGap,
 )
+from autoresearch.providers.credentials import resolve_api_key
 from autoresearch.providers.redaction import redact, redact_text
 
 EXIT_OK = 0
@@ -110,6 +111,12 @@ SKILLS = {
         version="1.0.0",
         description="One durable cycle: seed → review → question → hypotheses → versioned methodology → design → approved execution. Reuses completed stages; stops where asked.",
         entry='autoresearch skill workflow --seed-paper <pdf|doi|url> --until design  # resume: autoresearch skill workflow --project <id> --until experiment',
+    ),
+    "status": SkillMeta(
+        name="status",
+        version="1.0.0",
+        description="Read-only progress snapshot: per-project active runs, current stage, and latest durable artifacts. Use when the user asks whether research is still running or how far it got.",
+        entry='autoresearch skill status --project <id>',
     ),
 }
 
@@ -367,7 +374,16 @@ def skill_doctor() -> None:
             missing_roles = [role for role in required_roles if role not in container.router.assignments]
             if missing_roles:
                 return {"check": "providers", "ok": False, "detail": f"no model assigned to roles: {', '.join(missing_roles)}"}
-            return {"check": "providers", "ok": True, "detail": "all research roles assigned"}
+            unavailable = []
+            for name in sorted({container.router.assignments[role].provider for role in required_roles}):
+                provider = container.router.registry.get(name)
+                try:
+                    resolve_api_key(provider.config)
+                except Exception:
+                    unavailable.append(name)
+            if unavailable:
+                return {"check": "providers", "ok": False, "detail": "credentials unavailable for: " + ", ".join(unavailable)}
+            return {"check": "providers", "ok": True, "detail": "all research roles assigned; credentials resolved locally (live authentication not checked)"}
         finally:
             await container.close()
 
@@ -671,6 +687,7 @@ def workflow(
     limit: int = typer.Option(20, "--limit", min=1, max=100),
     top_k: int = typer.Option(5, "--top-k", min=1, max=15),
     max_cost_usd: float | None = typer.Option(None, "--max-cost-usd", min=0.0, help="Cumulative project provider-cost hard stop (applies to this and later invocations)."),
+    max_tokens: int | None = typer.Option(None, "--max-tokens", min=1, help="Project total-token ceiling (prompt+completion) across all provider calls."),
     max_revisions: int = typer.Option(0, "--max-revisions", min=0, max=5, help="Bounded adaptive revision cycles after an analyzed experiment (0 = off; experimental)."),
 ) -> None:
     """Advance one project through the full durable research cycle, reusing completed stages."""
@@ -689,7 +706,7 @@ def workflow(
         result = await c.workflow.run(
             seed=seed, project_id=project_id, until=until,
             limit=limit, top_k=top_k, max_cost_usd=max_cost_usd,
-            max_revisions=max_revisions,
+            max_total_tokens=max_tokens, max_revisions=max_revisions,
         )
         return result
 

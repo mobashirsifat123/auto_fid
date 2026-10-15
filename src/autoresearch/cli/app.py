@@ -319,6 +319,7 @@ def discover(
     limit: int = typer.Option(20, "--limit", min=1, max=100),
     since_year: int = typer.Option(datetime.now(timezone.utc).year - 3, "--since-year", min=1900),
     max_cost_usd: float | None = typer.Option(None, "--max-cost-usd", min=0.0, help="Cumulative project provider-cost hard stop."),
+    max_tokens: int | None = typer.Option(None, "--max-tokens", min=1, help="Project total-token ceiling (prompt+completion) across all provider calls."),
     max_runtime_seconds: float | None = typer.Option(None, "--max-runtime-seconds", min=1.0, help="Runtime limit for this invocation."),
 ) -> None:
     """Retrieve recent related papers and legally accessible PDFs. Use --from-catalog to import local papers."""
@@ -367,6 +368,7 @@ def workflow(
         limit=limit,
         top_k=top_k,
         max_cost_usd=max_cost_usd,
+        max_total_tokens=max_tokens,
         max_revisions=max_revisions,
     ))
 

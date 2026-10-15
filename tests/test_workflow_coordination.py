@@ -26,6 +26,7 @@ from autoresearch.domain.models import DownloadStatus, content_checksum
 from autoresearch.papers.metadata_sources import MetadataPaper, SourceSearchResult
 from autoresearch.papers.pdf_resolver import DownloadedPdf, PdfResolution
 from autoresearch.papers.search_pipeline import StudySearchPipeline
+from autoresearch.providers.budget import ProviderBudgetGuard
 from autoresearch.providers.capabilities import ModelRole
 from autoresearch.providers.config import ModelAssignment
 from autoresearch.providers.registry import ProviderRegistry
@@ -191,7 +192,7 @@ def _router(repository, workspace: str):
         ModelRole.SCIENTIFIC_CRITIC: ModelAssignment(ModelRole.SCIENTIFIC_CRITIC, "fake", "fake-model"),
         ModelRole.EMBEDDINGS: ModelAssignment(ModelRole.EMBEDDINGS, "fake_embeddings", "fake-embedding-v1"),
     }
-    return ModelRouter(registry, assignments, usage_sink=repository.record_provider_usage)
+    return ModelRouter(registry, assignments, usage_sink=repository.record_provider_usage, budget_guard=ProviderBudgetGuard(repository))
 
 
 def _harness(tmp_path: Path):

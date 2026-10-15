@@ -16,8 +16,8 @@ class ProviderConfig:
     api_key_env: str
     capabilities: frozenset[Capability]
     connect_timeout: float = 5.0
-    read_timeout: float = 120.0
-    total_timeout: float = 180.0
+    read_timeout: float = 300.0
+    total_timeout: float = 600.0
     max_retries: int = 2
     concurrency: int = 4
     requests_per_second: float | None = None

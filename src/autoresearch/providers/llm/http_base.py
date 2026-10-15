@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
-import os
 import time
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
 
 from ..capabilities import Capability
 from ..config import ProviderConfig
+from ..credentials import resolve_api_key
 from ..errors import ErrorKind, ProviderError, kind_for_status
 from ..retry import with_retry
 from ..usage import estimate_cost
@@ -46,10 +46,7 @@ class HTTPProviderBase:
         self._retry_count: ContextVar[int] = ContextVar(f"autoresearch_retry_count_{config.name}", default=0)
 
     def api_key(self) -> str:
-        value = os.getenv(self.config.api_key_env, "")
-        if not value:
-            raise ProviderError(f"Required environment variable '{self.config.api_key_env}' is not set.", ErrorKind.AUTHENTICATION, self.name)
-        return value
+        return resolve_api_key(self.config)
 
     async def request_json(self, method: str, path: str, *, headers: dict[str, str], json_body: dict[str, Any] | None = None) -> tuple[dict[str, Any], httpx.Headers]:
         async def operation() -> tuple[dict[str, Any], httpx.Headers]:
@@ -94,6 +91,7 @@ class HTTPProviderBase:
     async def health_check(self) -> HealthResult:
         started = time.perf_counter()
         try:
+            self.api_key()
             await self.model_info("")
         except ProviderError as exc:
             return HealthResult(False, exc.kind.value, str(exc), (time.perf_counter() - started) * 1000)
