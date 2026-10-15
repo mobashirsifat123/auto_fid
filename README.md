@@ -142,14 +142,20 @@ approval on every cycle.
 
 ## Agent skills (Claude Code / OpenCode)
 
-Six skills bridge the pipeline into agent hosts: `review`, `novelty`,
-`experiment`, `reinvention`, `deep-research`, `workflow`.
+Seven skills bridge the pipeline into agent hosts: `review`, `novelty`,
+`experiment`, `reinvention`, `deep-research`, `workflow`, and the read-only
+`status` snapshot.
 
 **OpenCode behavior:** installed skills are *explicit-invocation-only* —
 `opencode/autoinvoke: false` keeps them out of the model's auto-selection,
 and each is exposed as a slash command (`/review`, `/novelty`,
-`/experiment`, `/reinvention`, `/workflow`, `/deep-research`). They run only
-when you explicitly invoke them; they are never auto-suggested.
+`/experiment`, `/reinvention`, `/workflow`, `/deep-research`, `/status`).
+They run only when you explicitly invoke them; they are never auto-suggested.
+
+**Progress visibility:** `/status` (backed by `autoresearch skill status`)
+is a read-only snapshot — active runs, current stage, and latest durable
+artifacts per project. It is safe to invoke in any session while another
+one is mid-run, so "is it still working?" is always one slash command away.
 
 ```bash
 scripts/install_skills.sh                    # Claude Code (~/.claude/skills)
@@ -170,7 +176,7 @@ shipped inside the package.
 ## Verification status
 
 - Deterministic offline test suite (clean checkout):
-  `pip install -e ".[dev]" && pytest` — **109 passed / 1 skipped** at release;
+  `pip install -e ".[dev]" && pytest` — **115 passed / 1 skipped** at release;
   the single skip is the opt-in live-provider test
   (`RUN_LIVE_AUTORESEARCH_TESTS=1` enables paid/network verification).
   Maintainers additionally run an extended private suite covering the

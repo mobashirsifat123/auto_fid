@@ -15,11 +15,14 @@ class AnthropicProvider(HTTPProviderBase):
     def headers(self) -> dict[str, str]:
         return {"x-api-key": self.api_key(), "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
 
-    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
+    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
         system = "\n".join(str(item.get("content", "")) for item in messages if item.get("role") == "system")
         # Recent Claude models reject explicit sampling parameters; omit
         # temperature so the same adapter remains model-version neutral.
-        body: dict[str, Any] = {"model": model, "messages": [item for item in messages if item.get("role") != "system"], "max_tokens": max_tokens}
+        # Anthropic REQUIRES an explicit output cap, so "unlimited" maps to a
+        # high model-safe limit rather than an omitted parameter.
+        effective_cap = max_tokens if max_tokens is not None else 8192
+        body: dict[str, Any] = {"model": model, "messages": [item for item in messages if item.get("role") != "system"], "max_tokens": effective_cap}
         if system:
             body["system"] = system
         structured_tool_name: str | None = None
@@ -48,10 +51,10 @@ class AnthropicProvider(HTTPProviderBase):
             text = "".join(str(block.get("text", "")) for block in blocks if block.get("type") == "text")
         if not text and not any(block.get("type") == "tool_use" for block in blocks):
             raise ProviderError("Anthropic response contained no text or tool call.", ErrorKind.SCHEMA, self.name)
-        raw = {"tool_calls": [block for block in blocks if block.get("type") == "tool_use"]}
+        raw = {"tool_calls": [block for block in blocks if block.get("type") == "tool_use"], "finish_reason": "max_tokens" if payload.get("stop_reason") == "max_tokens" else payload.get("stop_reason")}
         return self.completion_result(text=text, model=str(payload.get("model") or model), usage=payload.get("usage") or {}, request_id=headers.get("request-id") or payload.get("id"), raw=raw)
 
-    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048) -> AsyncIterator[str]:
+    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None) -> AsyncIterator[str]:
         async def iterator() -> AsyncIterator[str]:
             result = await self.complete(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
             yield result.text

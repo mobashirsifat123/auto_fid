@@ -14,9 +14,12 @@ class GeminiProvider(HTTPProviderBase):
     def headers(self) -> dict[str, str]:
         return {"x-goog-api-key": self.api_key(), "Content-Type": "application/json"}
 
-    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
+    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
         contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": [{"text": str(item.get("content", ""))}]} for item in messages]
-        body: dict[str, Any] = {"contents": contents, "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}}
+        generation_config: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            generation_config["maxOutputTokens"] = max_tokens
+        body: dict[str, Any] = {"contents": contents, "generationConfig": generation_config}
         if response_format:
             body["generationConfig"]["responseMimeType"] = "application/json"
             schema_document = response_format.get("json_schema") or {}
@@ -35,7 +38,7 @@ class GeminiProvider(HTTPProviderBase):
         normalized = {"prompt_tokens": usage.get("promptTokenCount"), "completion_tokens": usage.get("candidatesTokenCount")}
         return self.completion_result(text=text, model=model, usage=normalized, request_id=headers.get("x-request-id"), raw={"tool_calls": tool_calls})
 
-    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048) -> AsyncIterator[str]:
+    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None) -> AsyncIterator[str]:
         async def iterator() -> AsyncIterator[str]:
             result = await self.complete(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
             yield result.text

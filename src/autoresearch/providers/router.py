@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
@@ -11,6 +12,8 @@ from uuid import uuid4
 from autoresearch.domain.models import ProviderUsage
 
 from .budget import ProviderBudgetGuard
+
+logger = logging.getLogger(__name__)
 from .capabilities import ModelRole
 from .config import ModelAssignment
 from .embeddings.base import EmbeddingResult
@@ -43,19 +46,43 @@ class ModelRouter:
         if project_id and self.budget_guard:
             self.budget_guard.require_allowed(project_id)
         targets = ((assignment.provider, assignment.model), *assignment.fallbacks)
+        # Output budget: call-site cap → per-model config cap → UNLIMITED
+        # (parameter omitted; the provider uses the model maximum). There is
+        # deliberately no small default: reasoning models spend hidden
+        # reasoning tokens against the completion budget, and a low default
+        # truncated structured JSON mid-payload. Cost stays bounded by the
+        # project budget guard, not by output caps.
+        effective_cap = max_tokens if max_tokens is not None else assignment.max_output_tokens
         previous: ProviderError | None = None
         for index, (provider_name, model) in enumerate(targets):
             provider = self.registry.get(provider_name)
-            started = time.perf_counter()
-            try:
-                result = await provider.complete(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens or assignment.max_output_tokens or 2048, response_format=response_format, tools=tools)
-            except ProviderError as exc:
-                previous = exc
-                if not exc.fallback_allowed or index == len(targets) - 1:
-                    raise
-                continue
-            self._record_usage(project_id, run_id, session_id, prompt_version, operation, ModelRole(role), provider_name, model, result.prompt_tokens, result.completion_tokens, result.estimated_cost, result.currency, result.request_id, (time.perf_counter() - started) * 1000, index + int(result.raw.get("retry_count") or 0), structured_output_status if response_format else None)
-            return result
+            # Truncation self-heal: if a finite cap was hit ("length" /
+            # "max_tokens"), retry with the cap doubled (max 2 retries) so a
+            # reasoning-heavy model cannot kill a structured payload. When no
+            # cap is set and the provider still reports length, the prompt +
+            # model context are the limit — surfaced, not retried.
+            attempt_cap = effective_cap
+            for attempt in range(3):
+                started = time.perf_counter()
+                try:
+                    result = await provider.complete(model=model, messages=messages, temperature=temperature, max_tokens=attempt_cap, response_format=response_format, tools=tools)
+                except ProviderError as exc:
+                    previous = exc
+                    if not exc.fallback_allowed or index == len(targets) - 1:
+                        raise
+                    break
+                self._record_usage(project_id, run_id, session_id, prompt_version, operation, ModelRole(role), provider_name, model, result.prompt_tokens, result.completion_tokens, result.estimated_cost, result.currency, result.request_id, (time.perf_counter() - started) * 1000, index + int(result.raw.get("retry_count") or 0), structured_output_status if response_format else None)
+                finish_reason = str(result.raw.get("finish_reason") or "")
+                if finish_reason == "length" and attempt_cap is not None and attempt < 2:
+                    logger.warning(
+                        "Output truncated at %d tokens (finish_reason=length); retrying with %d.",
+                        attempt_cap, attempt_cap * 2,
+                    )
+                    attempt_cap = attempt_cap * 2
+                    continue
+                return result
+            else:  # pragma: no cover - exhausted truncation retries
+                return result
         assert previous is not None
         raise previous
 
@@ -97,7 +124,7 @@ class ModelRouter:
     def stream(self, role: ModelRole | str, *, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None) -> AsyncIterator[str]:
         assignment = self.assignment(role)
         provider = self.registry.get(assignment.provider)
-        return provider.stream(model=assignment.model, messages=messages, temperature=temperature, max_tokens=max_tokens or assignment.max_output_tokens or 2048)
+        return provider.stream(model=assignment.model, messages=messages, temperature=temperature, max_tokens=max_tokens if max_tokens is not None else assignment.max_output_tokens)
 
     async def health_check(self, role: ModelRole | str) -> HealthResult:
         assignment = self.assignment(role)

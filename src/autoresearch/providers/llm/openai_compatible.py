@@ -47,8 +47,10 @@ class OpenAICompatibleProvider(HTTPProviderBase):
                 return amended
         return messages
 
-    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
-        body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    async def complete(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None, response_format: dict[str, Any] | None = None, tools: list[dict[str, Any]] | None = None) -> CompletionResult:
+        body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         if response_format:
             if self.config.structured_output_mode == "json_object":
                 messages = self._ensure_json_instruction(messages)
@@ -62,15 +64,18 @@ class OpenAICompatibleProvider(HTTPProviderBase):
             text = choice.get("content") or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError("Provider response omitted choices[0].message.", ErrorKind.SCHEMA, self.name) from exc
-        raw = {"tool_calls": choice.get("tool_calls") or []}
+        raw = {"tool_calls": choice.get("tool_calls") or [], "finish_reason": (payload.get("choices") or [{}])[0].get("finish_reason")}
         return self.completion_result(text=str(text), model=str(payload.get("model") or model), usage=payload.get("usage") or {}, request_id=headers.get("x-request-id") or payload.get("id"), raw=raw)
 
-    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int = 2048) -> AsyncIterator[str]:
+    def stream(self, *, model: str, messages: list[dict[str, Any]], temperature: float = 0.2, max_tokens: int | None = None) -> AsyncIterator[str]:
         async def iterator() -> AsyncIterator[str]:
             await self._limiter.acquire()
             async with self._semaphore:
                 try:
-                    async with self.client.stream("POST", "/chat/completions", headers=self.headers(), json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}) as response:
+                    stream_body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": True}
+                    if max_tokens is not None:
+                        stream_body["max_tokens"] = max_tokens
+                    async with self.client.stream("POST", "/chat/completions", headers=self.headers(), json=stream_body) as response:
                         if response.is_error:
                             raise ProviderError(f"Provider returned HTTP {response.status_code}.", ErrorKind.SERVER, self.name, response.status_code)
                         async for line in response.aiter_lines():
