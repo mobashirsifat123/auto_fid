@@ -1,0 +1,475 @@
+{
+  "benchmark": "ResearchBench",
+  "benchmark_version": "0.1.0",
+  "generated_at": "2026-08-02T06:49:17.310856+00:00",
+  "product_version": "0.1.0-alpha.1",
+  "fixture_policy": "deterministic local fake providers; no network and no paid credentials",
+  "cases": [
+    {
+      "suite": "ResearchBench-Search",
+      "id": "search-complete-20",
+      "description": "20-paper discovery, deduplication, and legal-PDF statuses",
+      "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.7263,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Search",
+      "id": "search-resume-downloads",
+      "description": "Interrupted discovery resumes without repeating successful searches or downloads",
+      "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.715,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Search",
+      "id": "search-partial-source",
+      "description": "A failed metadata source does not discard successful source work",
+      "test": "tests/test_end_to_end.py::test_partial_source_failure_recovers_without_repeating_successful_work",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_partial_source_failure_recovers_without_repeating_successful_work",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 3.2006,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Search",
+      "id": "search-api-contract",
+      "description": "Discovery mutation is durable and idempotent",
+      "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.0268,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Review",
+      "id": "review-evidence-gap",
+      "description": "Evidence-backed review and cited gap artifact",
+      "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 2.4754,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Review",
+      "id": "review-resume-cache",
+      "description": "Interrupted reviews reuse completed reviews and embeddings",
+      "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 2.1808,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Review",
+      "id": "review-sse-history",
+      "description": "Large durable event histories stream without truncation",
+      "test": "tests/test_api.py::test_run_sse_drains_large_completed_event_history",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_api.py::test_run_sse_drains_large_completed_event_history",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.7737,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Novelty",
+      "id": "novelty-fixture-policy",
+      "description": "Candidate generation and prior-art policy preserve explicit uncertainty",
+      "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.6024,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Novelty",
+      "id": "novelty-unavailable-gate",
+      "description": "Reinvention remains explicitly unavailable instead of simulated",
+      "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.9132,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-ExperimentDesign",
+      "id": "experiment-plan-approval",
+      "description": "Experiment planning produces an approval-required specification",
+      "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.2922,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-ExperimentDesign",
+      "id": "experiment-safety-boundaries",
+      "description": "Traversal, absolute paths, and shell injection are rejected",
+      "test": "tests/qa/test_security_boundaries.py::test_terminal_tool_rejects_shell_and_control_character_injection",
+      "result": {
+        "status": "pass",
+        "test": "tests/qa/test_security_boundaries.py::test_terminal_tool_rejects_shell_and_control_character_injection",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.4743,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Execution",
+      "id": "execution-approval",
+      "description": "Approval and cancellation mutations are durable and idempotent",
+      "test": "tests/test_api.py::test_cancel_and_approval_mutations_are_idempotent",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_api.py::test_cancel_and_approval_mutations_are_idempotent",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.8495,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Execution",
+      "id": "execution-cancellation",
+      "description": "Cancelled turns cannot execute late permissions",
+      "test": "tests/test_agent_runtime.py::test_cancelled_session_cannot_execute_late_permission",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_agent_runtime.py::test_cancelled_session_cannot_execute_late_permission",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.8077,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Execution",
+      "id": "execution-recovery",
+      "description": "Malformed and replayed events do not duplicate work",
+      "test": "tests/test_agent_runtime.py::test_agent_api_session_mode_sse_and_reinvention_fallback",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_agent_runtime.py::test_agent_api_session_mode_sse_and_reinvention_fallback",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.9806,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reproducibility",
+      "id": "repro-discovery-resume",
+      "description": "Discovery checkpoints are restart-safe",
+      "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.064,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reproducibility",
+      "id": "repro-review-resume",
+      "description": "Review checkpoints are restart-safe",
+      "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.344,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reproducibility",
+      "id": "repro-release-checksums",
+      "description": "Release artifacts verify checksums before staging",
+      "test": "tests/test_release_platform.py::test_diagnostics_and_release_staging_redact_and_verify",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_release_platform.py::test_diagnostics_and_release_staging_redact_and_verify",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.4248,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reproducibility",
+      "id": "repro-version-handshake",
+      "description": "Daemon reports compatible product/API/schema versions",
+      "test": "tests/test_release_platform.py::test_daemon_starts_with_versioned_health_and_stops_cleanly",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_release_platform.py::test_daemon_starts_with_versioned_health_and_stops_cleanly",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 1.0496,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reviewer",
+      "id": "reviewer-provider-routing",
+      "description": "Structured outputs, embeddings, retries, and usage are recorded",
+      "test": "tests/test_provider_contract.py::test_router_records_structured_and_embedding_usage",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_provider_contract.py::test_router_records_structured_and_embedding_usage",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.4267,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reviewer",
+      "id": "reviewer-unsupported-claims",
+      "description": "Secret and evidence policy boundaries stay enforced",
+      "test": "tests/test_provider_contract.py::test_configuration_rejects_inline_secrets",
+      "result": {
+        "status": "pass",
+        "test": "tests/test_provider_contract.py::test_configuration_rejects_inline_secrets",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.4023,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "ResearchBench-Reviewer",
+      "id": "reviewer-filesystem-safety",
+      "description": "Repository containment and symlink safety are enforced",
+      "test": "tests/qa/test_security_boundaries.py::test_repository_tools_reject_symlink_escape",
+      "result": {
+        "status": "pass",
+        "test": "tests/qa/test_security_boundaries.py::test_repository_tools_reject_symlink_escape",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 0.4085,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "researchbench-v0.1",
+        "error": null
+      }
+    },
+    {
+      "suite": "Generic-TUI",
+      "id": "tui-deterministic-slice",
+      "description": "Conversation-first terminal vertical slice",
+      "result": {
+        "status": "pass",
+        "test": "packages/autoresearch-cli test",
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "latency_seconds": 8.4338,
+        "cost_usd": 0.0,
+        "provider": "deterministic-fixture",
+        "model": "fake-v0",
+        "prompt_version": "tui-qa-v0.1",
+        "error": null
+      }
+    }
+  ],
+  "summary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "task_success_rate": 1.0,
+    "latency_seconds": 34.5759,
+    "median_case_latency_seconds": 1.0568,
+    "cost_usd": 0.0
+  },
+  "metrics": {
+    "task_success_rate": 1.0,
+    "tool_selection_accuracy": null,
+    "routing_accuracy": null,
+    "evidence_precision": null,
+    "evidence_recall": null,
+    "citation_correctness": null,
+    "unsupported_claim_rate": null,
+    "known_method_false_novelty_rate": null,
+    "experiment_spec_validity": null,
+    "reproducibility_rate": null,
+    "human_intervention_count": 0,
+    "token_usage": 0,
+    "cost_usd": 0.0,
+    "latency_seconds": 34.5759,
+    "first_event_latency": null,
+    "unmeasured_metric_reason": "The v0.1 offline gate measures deterministic pass/fail, latency, and zero fixture cost. Quality metrics requiring per-claim labels or human adjudication remain null rather than fabricated."
+  },
+  "release_gates": {
+    "required_case_success_rate": {
+      "value": 1.0,
+      "threshold": 1.0,
+      "passed": true
+    },
+    "unsafe_case_failures": {
+      "value": 0,
+      "threshold": 0,
+      "passed": true
+    },
+    "cost_usd": {
+      "value": 0.0,
+      "threshold": 0.0,
+      "passed": true
+    },
+    "latency_seconds": {
+      "value": 34.5759,
+      "threshold": null,
+      "passed": true
+    }
+  }
+}

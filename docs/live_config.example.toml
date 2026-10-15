@@ -1,0 +1,50 @@
+# Copy this file to .autoresearch/config.toml. Never put secret values here.
+# Export the referenced variables in the same shell before running the CLI.
+
+[providers.openai_reasoning]
+kind = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+concurrency = 4
+requests_per_second = 2
+max_retries = 3
+connect_timeout = 10
+read_timeout = 180
+total_timeout = 240
+pricing = { input_per_million = 0.40, output_per_million = 1.60, currency = "USD" }
+
+[providers.openai_embeddings]
+kind = "external_embeddings"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+embedding_dimension = 1536
+embedding_batch_size = 64
+concurrency = 2
+requests_per_second = 2
+max_retries = 3
+connect_timeout = 10
+read_timeout = 120
+total_timeout = 180
+pricing = { input_per_million = 0.02, output_per_million = 0.0, currency = "USD" }
+
+[models.literature_extraction]
+provider = "openai_reasoning"
+model = "gpt-4.1-mini"
+
+[models.research_reasoning]
+provider = "openai_reasoning"
+model = "gpt-4.1-mini"
+
+[models.scientific_critic]
+provider = "openai_reasoning"
+model = "gpt-4.1-mini"
+
+[models.embeddings]
+provider = "openai_embeddings"
+model = "text-embedding-3-small"
+
+# Scholarly-source polite access and Unpaywall are configured separately:
+# export SEMANTIC_SCHOLAR_API_KEY='...'
+# export OPENALEX_MAILTO='your-real-email@example.org'
+# export CROSSREF_MAILTO='your-real-email@example.org'
+# export UNPAYWALL_EMAIL='your-real-email@example.org'

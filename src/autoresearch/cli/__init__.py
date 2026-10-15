@@ -1,0 +1,1 @@
+"""AutoResearch command-line interface."""

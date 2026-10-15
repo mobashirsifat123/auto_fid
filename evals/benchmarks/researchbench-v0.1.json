@@ -1,0 +1,69 @@
+{
+  "benchmark": "ResearchBench",
+  "version": "0.1.0",
+  "fixture_policy": "deterministic local fake providers; no network and no paid credentials",
+  "suites": [
+    {
+      "name": "ResearchBench-Search",
+      "cases": [
+        {"id": "search-complete-20", "description": "20-paper discovery, deduplication, and legal-PDF statuses", "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]"},
+        {"id": "search-resume-downloads", "description": "Interrupted discovery resumes without repeating successful searches or downloads", "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads"},
+        {"id": "search-partial-source", "description": "A failed metadata source does not discard successful source work", "test": "tests/test_end_to_end.py::test_partial_source_failure_recovers_without_repeating_successful_work"},
+        {"id": "search-api-contract", "description": "Discovery mutation is durable and idempotent", "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation"}
+      ]
+    },
+    {
+      "name": "ResearchBench-Review",
+      "cases": [
+        {"id": "review-evidence-gap", "description": "Evidence-backed review and cited gap artifact", "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]"},
+        {"id": "review-resume-cache", "description": "Interrupted reviews reuse completed reviews and embeddings", "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings"},
+        {"id": "review-sse-history", "description": "Large durable event histories stream without truncation", "test": "tests/test_api.py::test_run_sse_drains_large_completed_event_history"}
+      ]
+    },
+    {
+      "name": "ResearchBench-Novelty",
+      "cases": [
+        {"id": "novelty-fixture-policy", "description": "Candidate generation and prior-art policy preserve explicit uncertainty", "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]"},
+        {"id": "novelty-unavailable-gate", "description": "Reinvention remains explicitly unavailable instead of simulated", "test": "tests/test_api.py::test_api_contract_capabilities_and_idempotent_mutation"}
+      ]
+    },
+    {
+      "name": "ResearchBench-ExperimentDesign",
+      "cases": [
+        {"id": "experiment-plan-approval", "description": "Experiment planning produces an approval-required specification", "test": "tests/test_end_to_end.py::test_complete_first_milestone_without_paid_api_keys[asyncio]"},
+        {"id": "experiment-safety-boundaries", "description": "Traversal, absolute paths, and shell injection are rejected", "test": "tests/qa/test_security_boundaries.py::test_terminal_tool_rejects_shell_and_control_character_injection"}
+      ]
+    },
+    {
+      "name": "ResearchBench-Execution",
+      "cases": [
+        {"id": "execution-approval", "description": "Approval and cancellation mutations are durable and idempotent", "test": "tests/test_api.py::test_cancel_and_approval_mutations_are_idempotent"},
+        {"id": "execution-cancellation", "description": "Cancelled turns cannot execute late permissions", "test": "tests/test_agent_runtime.py::test_cancelled_session_cannot_execute_late_permission"},
+        {"id": "execution-recovery", "description": "Malformed and replayed events do not duplicate work", "test": "tests/test_agent_runtime.py::test_agent_api_session_mode_sse_and_reinvention_fallback"}
+      ]
+    },
+    {
+      "name": "ResearchBench-Reproducibility",
+      "cases": [
+        {"id": "repro-discovery-resume", "description": "Discovery checkpoints are restart-safe", "test": "tests/test_end_to_end.py::test_interrupted_discovery_resumes_without_repeating_searches_or_downloads"},
+        {"id": "repro-review-resume", "description": "Review checkpoints are restart-safe", "test": "tests/test_end_to_end.py::test_interrupted_review_reuses_reviews_and_cached_embeddings"},
+        {"id": "repro-release-checksums", "description": "Release artifacts verify checksums before staging", "test": "tests/test_release_platform.py::test_diagnostics_and_release_staging_redact_and_verify"},
+        {"id": "repro-version-handshake", "description": "Daemon reports compatible product/API/schema versions", "test": "tests/test_release_platform.py::test_daemon_starts_with_versioned_health_and_stops_cleanly"}
+      ]
+    },
+    {
+      "name": "ResearchBench-Reviewer",
+      "cases": [
+        {"id": "reviewer-provider-routing", "description": "Structured outputs, embeddings, retries, and usage are recorded", "test": "tests/test_provider_contract.py::test_router_records_structured_and_embedding_usage"},
+        {"id": "reviewer-unsupported-claims", "description": "Secret and evidence policy boundaries stay enforced", "test": "tests/test_provider_contract.py::test_configuration_rejects_inline_secrets"},
+        {"id": "reviewer-filesystem-safety", "description": "Repository containment and symlink safety are enforced", "test": "tests/qa/test_security_boundaries.py::test_repository_tools_reject_symlink_escape"}
+      ]
+    }
+  ],
+  "release_gates": {
+    "required_case_success_rate": 1.0,
+    "max_unsafe_case_failures": 0,
+    "max_cost_usd": 0.0,
+    "max_regression_seconds": 30.0
+  }
+}

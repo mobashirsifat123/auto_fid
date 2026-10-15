@@ -1,0 +1,50 @@
+source_path,target_path,classification,dependencies,changes_required,tests,risk
+src/providers/__init__.py,src/autoresearch/providers/__init__.py,COPY_WITH_MINIMAL_CHANGE,"capabilities; config; errors; registry; router","package name and exports only",tests/test_provider_contract.py,LOW
+src/providers/capabilities.py,src/autoresearch/providers/capabilities.py,COPY_WITH_MINIMAL_CHANGE,"stdlib enum","retain eight future model roles",tests/test_provider_contract.py,LOW
+src/providers/config.py,src/autoresearch/providers/config.py,COPY_WITH_MINIMAL_CHANGE,"stdlib dataclasses; capabilities","add request-rate limit field; keep secret-field rejection",tests/test_provider_contract.py,LOW
+src/providers/errors.py,src/autoresearch/providers/errors.py,COPY_WITH_MINIMAL_CHANGE,"stdlib dataclasses; enum","preserve transient-only retry/fallback policy",tests/test_provider_contract.py,LOW
+src/providers/retry.py,src/autoresearch/providers/retry.py,COPY_WITH_MINIMAL_CHANGE,"asyncio; random; errors","support Retry-After and injected jitter for tests",tests/test_provider_contract.py,LOW
+src/providers/redaction.py,src/autoresearch/providers/redaction.py,COPY_WITH_MINIMAL_CHANGE,"os; re","package rename only",tests/test_provider_contract.py,LOW
+src/providers/usage.py,src/autoresearch/providers/usage.py,EXTRACT_AND_REFACTOR,"dataclasses; datetime","align with shared ProviderUsage provenance model and repository sink",tests/test_provider_contract.py,MEDIUM
+src/providers/registry.py,src/autoresearch/providers/registry.py,COPY_WITH_MINIMAL_CHANGE,"capabilities; config; errors","add typed embedding lookup",tests/test_provider_contract.py,LOW
+src/providers/router.py,src/autoresearch/providers/router.py,EXTRACT_AND_REFACTOR,"registry; assignments; usage; LLM contracts","add embeddings through ModelRouter; budget check; operation provenance",tests/test_provider_contract.py,HIGH
+src/providers/factory.py,src/autoresearch/providers/factory.py,EXTRACT_AND_REFACTOR,"all provider adapters; configuration","read secret-free TOML and build role assignments",tests/test_provider_contract.py,MEDIUM
+src/providers/budget.py,src/autoresearch/providers/budget.py,EXTRACT_AND_REFACTOR,"errors; storage budget methods","adapt repository protocol and accumulated spend",tests/test_provider_contract.py,MEDIUM
+src/providers/llm/__init__.py,src/autoresearch/providers/llm/__init__.py,COPY_WITH_MINIMAL_CHANGE,"llm/base; anthropic; gemini; openai_compatible","package exports only",tests/test_provider_contract.py,LOW
+src/providers/llm/base.py,src/autoresearch/providers/llm/base.py,COPY_WITH_MINIMAL_CHANGE,"typing; dataclasses; capabilities","package rename only",tests/test_provider_contract.py,LOW
+src/providers/llm/http_base.py,src/autoresearch/providers/llm/http_base.py,EXTRACT_AND_REFACTOR,"httpx; retry; usage; config","add bounded rate limiter and preserve pooled client",tests/test_provider_contract.py,MEDIUM
+src/providers/llm/openai_compatible.py,src/autoresearch/providers/llm/openai_compatible.py,COPY_WITH_MINIMAL_CHANGE,"http_base; provider contracts","package rename only",tests/test_provider_contract.py,MEDIUM
+src/providers/llm/anthropic.py,src/autoresearch/providers/llm/anthropic.py,COPY_WITH_MINIMAL_CHANGE,"http_base; provider contracts","package rename only",tests/test_provider_contract.py,MEDIUM
+src/providers/llm/gemini.py,src/autoresearch/providers/llm/gemini.py,COPY_WITH_MINIMAL_CHANGE,"http_base; provider contracts","package rename only",tests/test_provider_contract.py,MEDIUM
+src/providers/embeddings/__init__.py,src/autoresearch/providers/embeddings/__init__.py,COPY_WITH_MINIMAL_CHANGE,"embeddings/base; openai_compatible","package exports only",tests/test_provider_contract.py,LOW
+src/providers/embeddings/base.py,src/autoresearch/providers/embeddings/base.py,COPY_WITH_MINIMAL_CHANGE,"typing; LLM health contracts","package rename only",tests/test_provider_contract.py,LOW
+src/providers/embeddings/openai_compatible.py,src/autoresearch/providers/embeddings/openai_compatible.py,EXTRACT_AND_REFACTOR,"httpx; asyncio; provider config/errors","retain external-only batching and add rate limiter",tests/test_provider_contract.py,MEDIUM
+src/providers/embeddings/provider_specific.py,,REFERENCE_ONLY,"external embedding adapter","no distinct implementation required for milestone",,LOW
+src/providers/testing/__init__.py,src/autoresearch/providers/testing/__init__.py,COPY_WITH_MINIMAL_CHANGE,"fake_llm; fake_embeddings","package exports only; test namespace remains factory-inaccessible",tests/test_provider_contract.py,LOW
+src/providers/testing/fake_llm.py,src/autoresearch/providers/testing/fake_llm.py,EXTRACT_AND_REFACTOR,"LLM contracts","add callable deterministic responder and usage metadata",tests/test_provider_contract.py,LOW
+src/providers/testing/fake_embeddings.py,src/autoresearch/providers/testing/fake_embeddings.py,COPY_WITH_MINIMAL_CHANGE,"hashlib; embedding contracts","tests only; never factory-selectable",tests/test_provider_contract.py,LOW
+src/research/ingestion.py,src/autoresearch/ingestion/,EXTRACT_AND_REFACTOR,"pypdf; ResearchStore; embedding provider; filesystem","split parsing/chunking/extraction; remove original schema and direct embedding dependency",tests/test_ingestion.py,MEDIUM
+src/research/retrieval.py,src/autoresearch/review/similarity.py,REIMPLEMENT_FROM_INTERFACE,"ResearchStore; embedding provider; vector index","replace coupled FTS retrieval with transparent milestone ranking and router-only embeddings",tests/test_ranking.py,HIGH
+src/research/evidence_graph.py,src/autoresearch/review/extraction.py,EXTRACT_AND_REFACTOR,"ResearchStore; provider errors","reuse strict claim/evidence validation ideas; use shared provenance models",tests/test_evidence_provenance.py,HIGH
+src/research/gap_discovery.py,src/autoresearch/review/gap_analysis.py,EXTRACT_AND_REFACTOR,"ResearchStore; provider errors; evidence graph","require stored supporting claims/excerpts and counter-evidence",tests/test_gap_validation.py,HIGH
+src/research/service.py,src/autoresearch/application/services.py,REIMPLEMENT_FROM_INTERFACE,"ingestion; retrieval; evidence; storage; experiment runtime; workspace","implement only durable discover/review workflows; exclude experiment/UI concerns",tests/test_end_to_end.py,HIGH
+src/storage/research_store.py,src/autoresearch/storage/repository.py,REIMPLEMENT_FROM_INTERFACE,"sqlite3; JSONL; original migrations","new focused schema; additive idempotent migrations; provenance and provider usage",tests/test_migrations.py,HIGH
+tests/test_provider_gateway.py,tests/test_provider_contract.py,EXTRACT_AND_REFACTOR,"pytest; httpx; provider gateway","rename imports and test router embeddings/budget",tests/test_provider_contract.py,LOW
+tests/test_provider_abstraction.py,tests/test_provider_contract.py,REFERENCE_ONLY,"asyncio; legacy backend providers; CLI agent loop; remote client; provider capabilities","retain capability-validation intent; reject legacy backend and remote-client coupling",tests/test_provider_contract.py,MEDIUM
+tests/test_provider_health.py,tests/test_provider_contract.py,EXTRACT_AND_REFACTOR,"asyncio; httpx; provider capabilities/config/LLM adapters","retain HTTP adapter contract checks without live credentials",tests/test_provider_contract.py,LOW
+tests/test_paper_ingestion.py,tests/test_ingestion.py,EXTRACT_AND_REFACTOR,"pytest; PDF fixtures; original store","target split parser/chunker and new repository",tests/test_ingestion.py,MEDIUM
+tests/test_evidence_graph.py,tests/test_evidence_provenance.py,EXTRACT_AND_REFACTOR,"pytest; evidence graph; retrieval","assert complete artifact provenance and checksum",tests/test_evidence_provenance.py,MEDIUM
+tests/test_evidence_graph_claims.py,tests/test_evidence_provenance.py,EXTRACT_AND_REFACTOR,"pytest; evidence graph; ResearchStore","retain claim validation cases against new provenance schema",tests/test_evidence_provenance.py,MEDIUM
+tests/test_gap_discovery.py,tests/test_gap_validation.py,EXTRACT_AND_REFACTOR,"pytest; gap schemas; store","reject unsupported facts and verify counter-evidence",tests/test_gap_validation.py,MEDIUM
+tests/test_full_research_pipeline.py,tests/test_end_to_end.py,REFERENCE_ONLY,"FastAPI; experiment stack; Git","replace with deterministic first-milestone E2E; do not copy later pipelines",tests/test_end_to_end.py,HIGH
+tests/test_research_store.py,tests/test_migrations.py,EXTRACT_AND_REFACTOR,"ResearchService; ResearchStore; JSON; filesystem","retain persistence and round-trip intent for the focused SQLite schema",tests/test_migrations.py,MEDIUM
+tests/test_research_evolution.py,,REFERENCE_ONLY,"FastAPI; hypothesis generation; result analysis; research evolution; ResearchStore","later novelty/reinvention behavior is outside milestone one",,HIGH
+tests/test_research_frontend_api.py,,DO_NOT_COPY,"FastAPI; backend API; research service; provider test doubles","API/frontend routes are explicitly outside milestone one",,MEDIUM
+tests/test_research_methods.py,,REFERENCE_ONLY,"research methods; benchmark analysis","method catalog and benchmark coupling are outside the first milestone",,LOW
+tests/test_research_writes.py,,DO_NOT_COPY,"FastAPI; backend API; research service; filesystem","legacy API write routes must not become mock production routes",,HIGH
+tests/test_research_ui.py,,DO_NOT_COPY,"research service; ResearchStore; Gradio research workspace","legacy UI excluded",,HIGH
+src/ui/,,DO_NOT_COPY,"Gradio; generated static assets","legacy UI and generated assets excluded",,HIGH
+frontend/,,DO_NOT_COPY,"React/Vite; generated assets","current milestone reserves clean frontend only",,LOW
+scripts/run_a40_vllm.sh,,DO_NOT_COPY,"vLLM; tmux; machine paths","local inference and machine-specific deployment excluded",,CRITICAL
+benchmark/,,DO_NOT_COPY,"benchmark outputs","generated results excluded",,LOW
+memory/,,DO_NOT_COPY,"demo/user SQLite and artifacts","user and demo data excluded",,CRITICAL
