@@ -343,16 +343,20 @@ def skill_doctor() -> None:
             "detail": "SKILL.md present" if present else "missing canonical SKILL.md",
         })
     for name in sorted(SKILLS):
-        provenance = _installed_provenance(name)
-        if not provenance:
-            checks.append({"check": f"installed/{name}", "ok": False, "detail": "not installed; run `autoresearch skill install`"})
-        elif provenance.get("source_checksum") != _source_checksum(name):
-            checks.append({"check": f"installed/{name}", "ok": False, "detail": "out of date; run `autoresearch skill update`"})
-        else:
-            checks.append({"check": f"installed/{name}", "ok": True, "detail": "synced with canonical"})
+        for target in ("claude", "opencode"):
+            root = _target_roots(target)[0]
+            provenance = _installed_provenance(name, root)
+            if not provenance:
+                checks.append({"check": f"installed/{target}/{name}", "ok": False, "detail": f"not installed for {target}; run `autoresearch skill install --target {target}`"})
+            elif provenance.get("source_checksum") != _source_checksum(name):
+                checks.append({"check": f"installed/{target}/{name}", "ok": False, "detail": "out of date; run `autoresearch skill update`"})
+            else:
+                checks.append({"check": f"installed/{target}/{name}", "ok": True, "detail": "synced with canonical"})
     repo_skills = Path.cwd() / ".claude" / "skills"
     if repo_skills.is_dir():
-        for entry in sorted(path.name for path in repo_skills.iterdir() if path.is_dir()):
+        # Only OUR skill names matter here; foreign skills in a shared
+        # .claude/skills collection are none of this tool's business.
+        for entry in sorted(path.name for path in repo_skills.iterdir() if path.is_dir() and path.name in SKILLS):
             checks.append({
                 "check": f"repo-copy/{entry}",
                 "ok": False,
