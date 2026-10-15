@@ -77,12 +77,19 @@ Verify role assignments with:
 autoresearch skill doctor
 ```
 
+**Review speed:** re-running a review reuses verbatim-verified paper reviews
+from prior runs (same paper + same prompt version) instead of re-paying for
+them; only the gap analysis re-runs. Force full re-extraction with
+`--fresh`. Counter-evidence checks across gap candidates run in parallel.
+
 Cost limits (both durable, project-scoped, enforced by the router on every
 call):
 - `--max-cost-usd` — provider-cost hard stop in USD.
 - `--max-tokens` — aggregate token ceiling (prompt + completion) across all
   provider calls, independent of pricing; a runaway reasoning model stops
-  the project instead of the bill.
+  the project instead of the bill. Set a default for every project with the
+  `AUTORESEARCH_DEFAULT_MAX_TOKENS` environment variable (per-project values
+  still override it).
 
 Throughput knobs live in the provider config (`concurrency`,
 `requests_per_second`; HTTP 429 + Retry-After are retried with backoff
@@ -185,7 +192,7 @@ shipped inside the package.
 ## Verification status
 
 - Deterministic offline test suite (clean checkout):
-  `pip install -e ".[dev]" && pytest` — **123 passed / 1 skipped** at release;
+  `pip install -e ".[dev]" && pytest` — **127 passed / 1 skipped** at release;
   the single skip is the opt-in live-provider test
   (`RUN_LIVE_AUTORESEARCH_TESTS=1` enables paid/network verification).
   Maintainers additionally run an extended private suite covering the

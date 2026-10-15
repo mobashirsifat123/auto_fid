@@ -627,11 +627,12 @@ def review(
     project: str = typer.Option(..., "--project", help="Project ID returned by discover."),
     top_k: int = typer.Option(5, "--top-k", min=1, max=15),
     hierarchical: bool = typer.Option(False, "--hierarchical/--flat", help="Chunk-level hierarchical review for long PDFs."),
+    fresh: bool = typer.Option(False, "--fresh", help="Re-extract every paper review even when a verified one is reusable."),
 ) -> None:
-    """Run the deep review over an existing project corpus."""
+    """Run the deep review over an existing project corpus (reuses verified reviews by default)."""
 
     async def operation(c: ApplicationContainer) -> dict[str, Any]:
-        outcome = await c.review.review(project, top_k=top_k, hierarchical=hierarchical)
+        outcome = await c.review.review(project, top_k=top_k, hierarchical=hierarchical, fresh=fresh)
         return {
             "project_id": outcome.project_id,
             "review_run_id": outcome.run_id,

@@ -338,9 +338,10 @@ def review(
     hierarchical: bool = typer.Option(False, "--hierarchical/--flat", help="Use chunk-level hierarchical review for long legal PDFs."),
     max_cost_usd: float | None = typer.Option(None, "--max-cost-usd", min=0.0, help="Cumulative project provider-cost hard stop."),
     max_runtime_seconds: float | None = typer.Option(None, "--max-runtime-seconds", min=1.0, help="Runtime limit for this invocation."),
+    fresh: bool = typer.Option(False, "--fresh", help="Re-extract every paper review even when a verified one is reusable."),
 ) -> None:
-    """Review the corpus, rank top papers, and write one cited gap report."""
-    _run(lambda container: container.review.review(project, top_k=top_k, hierarchical=hierarchical, max_cost_usd=max_cost_usd, max_runtime_seconds=max_runtime_seconds))
+    """Review the corpus, rank top papers, and write one cited gap report. Reuses verified reviews by default."""
+    _run(lambda container: container.review.review(project, top_k=top_k, hierarchical=hierarchical, max_cost_usd=max_cost_usd, max_runtime_seconds=max_runtime_seconds, fresh=fresh))
 
 
 @app.command()

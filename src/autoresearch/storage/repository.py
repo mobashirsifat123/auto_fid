@@ -367,6 +367,23 @@ class ResearchRepository:
             params = (project_id, run_id)
         return [_review(row) for row in self.rows(sql + " ORDER BY paper_id", params)]
 
+    def latest_reusable_review(self, paper: "PaperRecord", *, hierarchical: bool) -> PaperReview | None:
+        """Latest review of this paper from any COMPLETED run of the same
+        project whose prompt version matches the requested review mode.
+        Reviews are verbatim-verified evidence for an immutable paper under a
+        fixed prompt version, so reuse is sound; a version bump or --fresh
+        forces re-extraction."""
+        version_prefix = "paper-review-hierarchical-v1" if hierarchical else "paper-review-v2"
+        row = self.row(
+            "SELECT pr.* FROM paper_reviews pr"
+            " JOIN pipeline_runs r ON r.id = pr.run_id"
+            " WHERE pr.project_id = ? AND pr.paper_id = ? AND r.status = 'completed'"
+            "   AND pr.provenance_json LIKE ?"
+            " ORDER BY pr.rowid DESC LIMIT 1",
+            (paper.project_id, paper.id, f'%"prompt_version": "{version_prefix}%'),
+        )
+        return _review(row) if row else None
+
     def review_for_paper(self, run_id: str, paper_id: str) -> PaperReview | None:
         row = self.row(
             "SELECT * FROM paper_reviews WHERE run_id=? AND paper_id=?",

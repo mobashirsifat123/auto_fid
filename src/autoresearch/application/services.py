@@ -98,6 +98,7 @@ class ReviewOutcome:
     gap: ResearchGap
     json_report: str
     markdown_report: str
+    reused: int = 0
 
 
 class SearchStrategyGenerator:
@@ -420,6 +421,7 @@ class LiteratureReviewService:
         hierarchical: bool = False,
         max_cost_usd: float | None = None,
         max_runtime_seconds: float | None = None,
+        fresh: bool = False,
     ) -> ReviewOutcome:
         require_model_role(self.router, ModelRole.LITERATURE_EXTRACTION)
         if not 1 <= top_k <= 15:
@@ -437,7 +439,7 @@ class LiteratureReviewService:
         })
         if max_cost_usd is not None:
             self.repository.set_project_budget(project_id, hard_stop=max_cost_usd)
-        return await self._execute(run.id, project_id, top_k=top_k, hierarchical=hierarchical, max_runtime_seconds=max_runtime_seconds)
+        return await self._execute(run.id, project_id, top_k=top_k, hierarchical=hierarchical, max_runtime_seconds=max_runtime_seconds, fresh=fresh)
 
     async def resume(self, run_id: str) -> ReviewOutcome:
         run = self.repository.get_run(run_id)
@@ -458,7 +460,7 @@ class LiteratureReviewService:
             max_runtime_seconds=float(data["max_runtime_seconds"]) if data.get("max_runtime_seconds") is not None else None,
         )
 
-    async def _execute(self, run_id: str, project_id: str, *, top_k: int, hierarchical: bool, max_runtime_seconds: float | None) -> ReviewOutcome:
+    async def _execute(self, run_id: str, project_id: str, *, top_k: int, hierarchical: bool, max_runtime_seconds: float | None, fresh: bool = False) -> ReviewOutcome:
         guard = _ExecutionGuard(max_runtime_seconds)
         project = self.repository.get_project(project_id)
         seed = self.repository.get_seed(project_id)
@@ -467,7 +469,7 @@ class LiteratureReviewService:
             raise ValueError("Project discovery state is incomplete.")
         try:
             guard.require_allowed("paper review")
-            results = await asyncio.gather(*(self._review_one(paper, run_id, hierarchical=hierarchical) for paper in papers), return_exceptions=True)
+            results = await asyncio.gather(*(self._review_one(paper, run_id, hierarchical=hierarchical, allow_reuse=not fresh) for paper in papers), return_exceptions=True)
             bundles: list[ReviewBundle] = []
             for paper, result in zip(papers, results):
                 if isinstance(result, Exception):
@@ -521,16 +523,27 @@ class LiteratureReviewService:
             json_artifact, markdown_artifact = self.writer.write(project_id=project_id, run_id=run_id, papers=top_papers, reviews=top_reviews, scores=top_scores, claims=top_claims, gap=gap)
             self.repository.complete_checkpoint(run_id, "review_artifacts", payload={"json": json_artifact.path, "markdown": markdown_artifact.path})
             self.repository.finish_run(run_id)
-            return ReviewOutcome(project_id, run_id, len(reviews), len(results) - len(reviews), tuple(score.paper_id for score in top_scores), gap, json_artifact.path, markdown_artifact.path)
+            reused = sum(1 for review in reviews if review.run_id != run_id)
+            return ReviewOutcome(project_id, run_id, len(reviews), len(results) - len(reviews), tuple(score.paper_id for score in top_scores), gap, json_artifact.path, markdown_artifact.path, reused)
         except BaseException as exc:
             self.repository.finish_run(run_id, error=redact_text(f"{type(exc).__name__}: {exc}"))
             raise
 
-    async def _review_one(self, paper, run_id: str, *, hierarchical: bool) -> ReviewBundle:
+    async def _review_one(self, paper, run_id: str, *, hierarchical: bool, allow_reuse: bool = True) -> ReviewBundle:
         checkpoint = self.repository.checkpoint(run_id, "paper_review", paper.id)
         existing = self.repository.review_for_paper(run_id, paper.id)
         if checkpoint and checkpoint["status"] == "completed" and existing:
             return ReviewBundle(existing, tuple(self.repository.claims(paper.project_id, ids=existing.evidence_claim_ids)))
+        if allow_reuse:
+            # Cross-run reuse: a verbatim-verified review of the SAME paper
+            # under the SAME review prompt version is immutable evidence —
+            # re-running review must not pay for it again. Re-running with
+            # --fresh forces full re-extraction.
+            cached = self.repository.latest_reusable_review(paper, hierarchical=hierarchical)
+            if cached is not None:
+                self.repository.begin_checkpoint(run_id, "paper_review", paper.id)
+                self.repository.complete_checkpoint(run_id, "paper_review", paper.id, payload={"review_id": cached.id, "claim_ids": list(cached.evidence_claim_ids), "reused_from_run": cached.run_id})
+                return ReviewBundle(cached, tuple(self.repository.claims(paper.project_id, ids=cached.evidence_claim_ids)))
         self.repository.begin_checkpoint(run_id, "paper_review", paper.id)
         try:
             async with self.review_semaphore:

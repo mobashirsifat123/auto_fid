@@ -32,17 +32,22 @@ class BudgetDecision:
 
 
 class ProviderBudgetGuard:
-    def __init__(self, store: BudgetStore) -> None:
+    def __init__(self, store: BudgetStore, *, default_token_ceiling: int | None = None, default_hard_stop: float | None = None) -> None:
         self.store = store
+        # Defaults apply to every project without an explicit budget: a
+        # per-project value (set via --max-tokens/--max-cost-usd) always
+        # overrides them; unset means unbounded for that dimension.
+        self.default_token_ceiling = default_token_ceiling
+        self.default_hard_stop = default_hard_stop
 
     def evaluate(self, project_id: str, estimated_cost: float | None = None) -> BudgetDecision:
         budget = self.store.get_project_budget(project_id) or {}
         spend = self.store.provider_spend(project_id)
         tokens = self.store.provider_tokens(project_id)
         hard_stop_raw = budget.get("hard_stop")
-        hard_stop = float(hard_stop_raw) if hard_stop_raw is not None else None
+        hard_stop = float(hard_stop_raw) if hard_stop_raw is not None else self.default_hard_stop
         ceiling_raw = budget.get("token_ceiling")
-        ceiling = int(ceiling_raw) if ceiling_raw is not None else None
+        ceiling = int(ceiling_raw) if ceiling_raw is not None else self.default_token_ceiling
 
         if ceiling is not None and tokens >= ceiling:
             return BudgetDecision(

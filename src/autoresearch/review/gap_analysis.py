@@ -97,11 +97,15 @@ class GapAnalyzer:
         )
 
         # Step 3: For each candidate, search for counter-evidence explicitly
-        enhanced_candidates = []
-        for candidate_payload in gap_candidates:
-            counter = await self._find_counter_evidence(
+        # (parallel — these are independent adversarial reads of the corpus).
+        counters = await asyncio.gather(*[
+            self._find_counter_evidence(
                 project_id, run_id, candidate_payload, context, claim_map, provider, model,
             )
+            for candidate_payload in gap_candidates
+        ])
+        enhanced_candidates = []
+        for candidate_payload, counter in zip(gap_candidates, counters):
             candidate_payload["counter_evidence_claim_ids"] = counter
             enhanced_candidates.append(candidate_payload)
 
