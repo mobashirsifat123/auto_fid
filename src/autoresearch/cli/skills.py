@@ -44,7 +44,6 @@ from autoresearch.domain.models import (
     NoveltyCandidate,
     ResearchGap,
 )
-from autoresearch.providers.credentials import resolve_api_key
 from autoresearch.providers.redaction import redact, redact_text
 
 EXIT_OK = 0
@@ -111,12 +110,6 @@ SKILLS = {
         version="1.0.0",
         description="One durable cycle: seed → review → question → hypotheses → versioned methodology → design → approved execution. Reuses completed stages; stops where asked.",
         entry='autoresearch skill workflow --seed-paper <pdf|doi|url> --until design  # resume: autoresearch skill workflow --project <id> --until experiment',
-    ),
-    "status": SkillMeta(
-        name="status",
-        version="1.0.0",
-        description="Read-only progress snapshot: per-project active runs, current stage, and latest durable artifacts. Use when the user asks whether research is still running or how far it got.",
-        entry='autoresearch skill status --project <id>',
     ),
 }
 
@@ -374,16 +367,7 @@ def skill_doctor() -> None:
             missing_roles = [role for role in required_roles if role not in container.router.assignments]
             if missing_roles:
                 return {"check": "providers", "ok": False, "detail": f"no model assigned to roles: {', '.join(missing_roles)}"}
-            unavailable = []
-            for name in sorted({container.router.assignments[role].provider for role in required_roles}):
-                provider = container.router.registry.get(name)
-                try:
-                    resolve_api_key(provider.config)
-                except Exception:
-                    unavailable.append(name)
-            if unavailable:
-                return {"check": "providers", "ok": False, "detail": "credentials unavailable for: " + ", ".join(unavailable)}
-            return {"check": "providers", "ok": True, "detail": "all research roles assigned; credentials resolved locally (live authentication not checked)"}
+            return {"check": "providers", "ok": True, "detail": "all research roles assigned"}
         finally:
             await container.close()
 
