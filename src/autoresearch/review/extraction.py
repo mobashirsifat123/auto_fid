@@ -1,4 +1,4 @@
-"""Purpose: Extracts factual scientific claims from paper text across 3 distinct reviewer angles (rigor, reproducibility, novelty)."""
+"""Extract evidence, rigor, and reproducibility in one source-grounded pass."""
 
 from __future__ import annotations
 
@@ -63,15 +63,10 @@ _VERBATIM_RULE = (
 _RIGOR_SYSTEM_PROMPT = (
     "Act as a rigorous scientific reviewer. Every evidence item must quote an "
     "exact contiguous excerpt from the supplied source. Do not infer missing "
-    "results. " + _VERBATIM_RULE
+    "results. Assess methodological rigor, reproducibility, and the claimed "
+    "contribution together in one concise review. Distinguish measured results "
+    "from author claims and missing information. " + _VERBATIM_RULE
 )
-
-# Perspective-specific system prompts for multi-angle review
-_PERSPECTIVE_PROMPTS = {
-    "rigor": "Act as a rigorous scientific reviewer focused on experimental rigor. Scrutinize the methodology, statistical validity, and reproducibility. Do not infer missing results. " + _VERBATIM_RULE,
-    "reproducibility": "Act as a reproducibility auditor. Focus on whether the methods, datasets, and evaluation protocols are sufficiently detailed to reproduce. Flag missing details, ambiguous configurations, and incomplete ablations. " + _VERBATIM_RULE,
-    "novelty": "Act as a novelty-focused reviewer. Assess what is genuinely new compared to prior work, what the key technical contribution is, and whether the claimed novelty is substantiated. " + _VERBATIM_RULE,
-}
 
 _EXTRACTION_USER_TEMPLATE = (
     "Prompt version: {prompt_version}\n"
@@ -84,7 +79,13 @@ _EXTRACTION_USER_TEMPLATE = (
     "requires claim_type, statement, excerpt, page, section, confidence.\n\n"
     "CRITICAL: every excerpt must be copied word-for-word from the SOURCE "
     "above, including mathematical symbols. Omit any span you cannot quote "
-    "verbatim. Fewer verified spans are better than paraphrased ones."
+    "verbatim. Fewer verified spans are better than paraphrased ones.\n\n"
+    "OUTPUT BUDGET (hard limits — the response is machine-verified and "
+    "overlong responses fail): evidence_spans MUST contain AT MOST 10 items, "
+    "sorted by importance; each excerpt MUST be at most 50 words; results[], "
+    "ablations[], limitations[], failure_modes[], datasets[] MUST each contain "
+    "at most 8 items; every other field at most 3 sentences. Select only the "
+    "most decision-relevant evidence."
 )
 
 
@@ -106,49 +107,65 @@ class PaperReviewExtractor:
             raise ValueError(f"Paper '{paper.title}' has neither extractable PDF text nor abstract metadata.")
 
         if not hierarchical or len(source_text) <= 40_000:
-            # Multi-perspective extraction: review from 3 angles and aggregate
-            return await self._multi_perspective_extract(paper, run_id=run_id, source_text=source_text)
+            return await self._extract_source(
+                paper, run_id=run_id, source_text=source_text,
+                prompt_version=HIERARCHICAL_REVIEW_PROMPT_VERSION if hierarchical else f"{REVIEW_PROMPT_VERSION}-integrated-v1", operation="paper_review",
+            )
 
         groups = _source_groups(chunks, max_characters=35_000)
         if not groups:
             groups = (source_text,)
-        leaves = [
-            await self._multi_perspective_extract(
+        # Groups are independent sections of the same paper: review them
+        # concurrently (globally bounded by the provider's concurrency gate)
+        # and merge the survivors — one group failing must not discard the
+        # evidence the other groups produced, nor serialize them behind it.
+        leaves_results = await asyncio.gather(
+            *(self._extract_source(
                 paper, run_id=run_id, source_text=group,
-            )
-            for group in groups
-        ]
-        return self._merge_leaves(paper, run_id, leaves)
-
-    async def _multi_perspective_extract(self, paper: PaperRecord, *, run_id: str, source_text: str) -> ReviewBundle:
-        """Extract reviews from 3 perspectives concurrently and aggregate the best elements.
-
-        Perspectives are fault-tolerant: one perspective failing (e.g. a
-        provider JSON hiccup or a paper with no verbatim quote in that angle)
-        must not discard evidence the other perspectives produced. The paper
-        only fails when every perspective fails.
-        """
-        tasks = [
-            self._extract_source(
-                paper, run_id=run_id, source_text=source_text,
-                prompt_version=f"{REVIEW_PROMPT_VERSION}-{perspective}",
-                operation=f"paper_review_{perspective}",
-                system_prompt=system_prompt,
-            )
-            for perspective, system_prompt in _PERSPECTIVE_PROMPTS.items()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        bundles: list[ReviewBundle] = []
-        first_error: Exception | None = None
-        for res in results:
-            if isinstance(res, ReviewBundle):
-                bundles.append(res)
-            elif first_error is None and isinstance(res, Exception):
-                first_error = res
-
-        if not bundles:
+                prompt_version=HIERARCHICAL_REVIEW_PROMPT_VERSION, operation="paper_review_section",
+            ) for group in groups),
+            return_exceptions=True,
+        )
+        leaves = [result for result in leaves_results if isinstance(result, ReviewBundle)]
+        if not leaves:
+            first_error = next((result for result in leaves_results if isinstance(result, Exception)), None)
             raise first_error or ValueError(f"Paper '{paper.title}' yielded no evidence-backed review.")
-        return self._merge_perspectives(paper, run_id, bundles)
+        return self._merge_bundles(paper, run_id, leaves, prompt_version=HIERARCHICAL_REVIEW_PROMPT_VERSION)
+
+    async def extract_ensemble(
+        self,
+        paper: PaperRecord,
+        *,
+        run_id: str,
+        chunks: tuple[DocumentChunk, ...],
+        fallback_text: str = "",
+        hierarchical: bool = False,
+    ) -> ReviewBundle:
+        """Two independent parallel extraction legs merged into one review.
+
+        The second leg sees the source in reversed chunk order — a diversity
+        signal for evidence-span coverage without any prompt/API change. Both
+        legs run concurrently, so the ensemble costs the wall-clock of one
+        leg. A single failing leg degrades to the survivor; only a total
+        failure raises.
+        """
+        ordered = tuple(chunks)
+        reversed_chunks = tuple(reversed(ordered))
+        results = await asyncio.gather(
+            self.extract(paper, run_id=run_id, chunks=ordered, fallback_text=fallback_text, hierarchical=hierarchical),
+            self.extract(paper, run_id=run_id, chunks=reversed_chunks, fallback_text=fallback_text, hierarchical=hierarchical),
+            return_exceptions=True,
+        )
+        bundles = [result for result in results if isinstance(result, ReviewBundle)]
+        if not bundles:
+            first_error = next((result for result in results if isinstance(result, Exception)), None)
+            raise first_error or ValueError(f"Paper '{paper.title}' ensemble yielded no evidence-backed review.")
+        if len(bundles) == 1:
+            return bundles[0]
+        return self._merge_bundles(
+            paper, run_id, bundles,
+            prompt_version=f"{REVIEW_PROMPT_VERSION}-ensemble-v1",
+        )
 
     async def _extract_source(self, paper: PaperRecord, *, run_id: str, source_text: str, prompt_version: str, operation: str, system_prompt: str | None = None) -> ReviewBundle:
         system = system_prompt or _RIGOR_SYSTEM_PROMPT
@@ -179,17 +196,11 @@ class PaperReviewExtractor:
         review = PaperReview(uuid4().hex, paper.project_id, run_id, paper.id, review_content["problem"], review_content["research_question"], review_content["method"], review_content["datasets"], review_content["experimental_protocol"], review_content["results"], review_content["ablations"], review_content["limitations"], review_content["failure_modes"], review_content["evidence_claim_ids"], review_content["confidence"], provenance)
         return ReviewBundle(review, claims)
 
-    def _merge_perspectives(self, paper: PaperRecord, run_id: str, bundles: list[ReviewBundle]) -> ReviewBundle:
+    def _merge_bundles(self, paper: PaperRecord, run_id: str, bundles: list[ReviewBundle], *, prompt_version: str) -> ReviewBundle:
         reviews = [b.review for b in bundles]
         all_claims = [claim for b in bundles for claim in b.claims]
         provider = reviews[0].provenance.provider
         model = reviews[0].provenance.model
-
-        # Cross-reference analysis (R3): count occurrence frequency of each claim across perspectives
-        evidence_counts: dict[tuple[str, str, str], int] = {}
-        for claim in all_claims:
-            key = (_normalize(claim.statement), _normalize(claim.excerpt), claim.section or "")
-            evidence_counts[key] = evidence_counts.get(key, 0) + 1
 
         merged_claims: list[EvidenceClaim] = []
         seen_evidence: set[tuple[str, str, str]] = set()
@@ -198,14 +209,7 @@ class PaperReviewExtractor:
             if key in seen_evidence:
                 continue
             seen_evidence.add(key)
-            count = evidence_counts.get(key, 1)
-            # Calibrate claim confidence based on multi-perspective agreement
-            calibrated_conf = round(max(0.0, min(1.0, claim.confidence * (0.6 + 0.133 * count))), 6)
-            merged_claims.append(EvidenceClaim(
-                claim.id, claim.project_id, claim.run_id, claim.paper_id,
-                claim.claim_type, claim.statement, claim.excerpt, claim.page,
-                claim.section, calibrated_conf, claim.provenance,
-            ))
+            merged_claims.append(claim)
         merged_claim_ids = [claim.id for claim in merged_claims]
 
         content = {
@@ -225,8 +229,8 @@ class PaperReviewExtractor:
             project_id=paper.project_id, run_id=run_id,
             source_evidence=content["evidence_claim_ids"],
             provider=provider, model=model,
-            prompt_version=f"{REVIEW_PROMPT_VERSION}-multi-perspective",
-            content={**content, "perspectives": [r.provenance.prompt_version for r in reviews]},
+            prompt_version=prompt_version,
+            content={**content, "sections": [r.provenance.checksum for r in reviews]},
         )
         review = PaperReview(
             uuid4().hex, paper.project_id, run_id, paper.id, content["problem"],
@@ -237,21 +241,18 @@ class PaperReviewExtractor:
         )
         return ReviewBundle(review, tuple(merged_claims))
 
-    def _merge_leaves(self, paper: PaperRecord, run_id: str, leaves: list[ReviewBundle]) -> ReviewBundle:
-        """Merge hierarchical chunks (for long PDFs) - same logic but chunks are page groups."""
-        return self._merge_perspectives(paper, run_id, leaves)
-
     @staticmethod
     def _claims(value: object, paper: PaperRecord, run_id: str, source_text: str, provider: str, model: str, prompt_version: str = REVIEW_PROMPT_VERSION) -> tuple[EvidenceClaim, ...]:
         if not isinstance(value, list):
             return ()
         claims: list[EvidenceClaim] = []
+        normalized_source = " ".join(source_text.split())
         for raw in value:
             if not isinstance(raw, dict):
                 continue
             excerpt = _string(raw.get("excerpt"))
             statement = _string(raw.get("statement"))
-            if not excerpt or not statement or not _fuzzy_verbatim_match(excerpt, source_text):
+            if not excerpt or not statement or excerpt not in normalized_source:
                 continue
             content = {"paper_id": paper.id, "statement": statement, "excerpt": excerpt, "page": raw.get("page"), "section": raw.get("section")}
             provenance = ArtifactProvenance.create(project_id=paper.project_id, run_id=run_id, source_evidence=(f"paper:{paper.id}",), provider=provider, model=model, prompt_version=prompt_version, content=content)
@@ -279,26 +280,6 @@ def _strings(value: object) -> tuple[str, ...]:
 
 def _normalize(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.lower()))
-
-
-def _fuzzy_verbatim_match(excerpt: str, source_text: str, threshold: float = 0.92) -> bool:
-    """Exact substring first; sliding-window fuzzy ratio fallback for minor LLM formatting variations."""
-    from difflib import SequenceMatcher
-    norm_excerpt = _normalize(excerpt)
-    norm_source = _normalize(source_text)
-    if not norm_excerpt:
-        return False
-    if norm_excerpt in norm_source:
-        return True
-    excerpt_len = len(norm_excerpt)
-    if excerpt_len < 20 or excerpt_len > len(norm_source):
-        return False
-    step = max(1, excerpt_len // 4)
-    for i in range(0, len(norm_source) - excerpt_len + 1, step):
-        window = norm_source[i:i + excerpt_len + excerpt_len // 5]
-        if SequenceMatcher(None, norm_excerpt, window).ratio() >= threshold:
-            return True
-    return False
 
 
 def _confidence(value: object) -> float:

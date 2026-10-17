@@ -52,7 +52,58 @@ stages, so re-invoking with `--project` resumes instead of repeating.
 ```
 
 Stop stages: `review`, `question`, `hypotheses`, `methodology`, `design`,
-`experiment`.
+`experiment`, `manuscript`. **Credentials:** inside an agent session the
+skills automatically follow the session's own AI model and API key
+(auto-detected from the OpenCode credential store; no config file needed).
+With an explicit config, resolution order is `api_key_env` → OpenCode
+credential store → for Anthropic-protocol providers the session's
+`ANTHROPIC_API_KEY` / connector settings. The design stage also
+generates + statically verifies the experiment implementation when none
+exists (bounded repair loop; failures recorded). The manuscript stage
+requires an analyzed experiment report; without one it reports `blocked`
+with the exact missing prerequisite instead of fabricating content. Every
+analyzed outcome is persisted to the shared Findings Memory, which
+conditions later novelty runs (failures and refutations first).
+
+The manuscript stage enforces the FastTrack Academic Research Paper
+Template (bundled `template-spec.json`): six-part 150-250-word abstract,
+3-6 evidence-derived keywords, three-part Introduction, conditional
+Literature Review, five-field cookbook Methodology, objective Results with
+tables + deterministic figure, Discussion with ≥ 3 limitations, References,
+Appendices, and the Inside-Out writing order — audited deterministically
+and fail-closed (`template_audit.json`). The upstream stages supply the
+evidence those rules consume: review (quotable gap + project keywords +
+per-paper study design/datasets/limitations), novelty (the five Methodology
+fields or honest "not specified at freeze time" markers), experiment
+(≥ 3 limitation rows + raw seed metrics + exact commands).
+
+## Progress reporting
+
+While the skill runs, the CLI writes one JSON line per completed step to
+**stderr** (stdout stays the single final result):
+
+```json
+{"progress": {"stage": "review.papers", "percent": 40, "completed": 8,
+  "total": 20, "detail": "8/20 papers reviewed",
+  "remaining": ["novelty", "experiment", "manuscript"]}}
+```
+
+Surface every event to the user as: `stage: N% (k/total) — remaining: ...`.
+Percentages are completed steps / total steps, NEVER time estimates. Do not
+invent a percentage before a progress line arrives; report stalls honestly.
+
+
+- Stages run in order — review → question → hypotheses → methodology →
+  design → experiment. Announce the target stage before invoking the
+  command, and report the per-stage dispositions when it returns.
+- Stages can take minutes. When the host supports background execution, run
+  the CLI in the background and poll
+  `"${AUTORESEARCH_BIN:-autoresearch}" skill status --project "<project_id>"`
+  every ~30–60 s, echoing one line per poll, e.g.
+  `[stage 2/6] review — run <run_id> running`. Stop when the newest run
+  reaches a terminal status.
+- The user can invoke `/status` in any session at any time for the same
+  read-only snapshot while this workflow runs.
 
 ## Interpreting the JSON result
 
@@ -73,3 +124,11 @@ Stop stages: `review`, `question`, `hypotheses`, `methodology`, `design`,
 - Methodology freezing records what will be tested; it never certifies novelty.
 - Do not fabricate results, citations, or decisions. All claims come from the
   backend's retained artifacts.
+
+## Where state lives
+
+Run the first invocation from inside the project's folder: the project's
+state is stored in `<project-dir>/.autoresearch/` and the project remembers
+it. Resume with `--project <id>` from any directory — the skills anchor to
+the project's own database and never mix projects or write into the source
+checkout.

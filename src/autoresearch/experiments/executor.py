@@ -6,6 +6,7 @@ typed action and an approval checksum matching the immutable specification.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -55,6 +56,7 @@ class DurableExperimentExecutor:
             source_evidence=[job.id, approved_checksum], provider="deterministic", model="typed-worker",
             prompt_version="executor-v2", content={"argv": argv, "exit_code": process.returncode})
         result = ExecutionResult(uuid4().hex, spec.project_id, spec.run_id, job.id, process.returncode or 0,
-            stdout, stderr, {}, {}, (), None if process.returncode == 0 else "IMPLEMENTATION_FAILURE", provenance)
+            stdout, stderr, {}, {}, (), None if process.returncode == 0 else "IMPLEMENTATION_FAILURE", provenance,
+            command_json=json.dumps(argv))
         self.repository.save_execution_result(result)
         return result

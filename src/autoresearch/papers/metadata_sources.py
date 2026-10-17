@@ -102,6 +102,35 @@ class SemanticScholarSource(HttpMetadataSource):
             ))
         return SourceSearchResult(self.name, query, tuple(papers), content_checksum(payload))
 
+    async def lookup(self, identifier: str) -> MetadataPaper | None:
+        """Direct paper lookup by DOI, arXiv id, or paper id; unknown ids return None (404)."""
+        doi = normalize_doi(identifier)
+        arxiv = None if doi else normalize_arxiv_id(identifier)
+        path = f"/paper/DOI:{doi}" if doi else f"/paper/arXiv:{arxiv}" if arxiv else f"/paper/{identifier.strip()}"
+        fields = "paperId,title,abstract,authors,year,publicationDate,externalIds,url,openAccessPdf,isOpenAccess,citationCount,venue"
+        params: dict[str, Any] = {"fields": fields}
+        key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+        try:
+            response = await self._get(path, params=params, headers={"x-api-key": key} if key else None)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                return None
+            raise
+        row = response.json()
+        if not row:
+            return None
+        external = row.get("externalIds") or {}
+        oa = row.get("openAccessPdf") or {}
+        return MetadataPaper(
+            title=_text(row.get("title")), abstract=_text(row.get("abstract")),
+            authors=tuple(_text(item.get("name")) for item in row.get("authors") or [] if _text(item.get("name"))),
+            year=_year(row.get("year")), publication_date=_date(row.get("publicationDate")),
+            doi=normalize_doi(external.get("DOI")), arxiv_id=normalize_arxiv_id(external.get("ArXiv")),
+            url=_url(row.get("url")), open_access_pdf_url=_url(oa.get("url")),
+            is_open_access=bool(row.get("isOpenAccess")), citation_count=_count(row.get("citationCount")),
+            venue=_text(row.get("venue")), source=self.name, external_id=_text(row.get("paperId")),
+        )
+
 
 class OpenAlexSource(HttpMetadataSource):
     name = "openalex"
@@ -117,22 +146,45 @@ class OpenAlexSource(HttpMetadataSource):
         if mailto:
             params["mailto"] = mailto
         payload = (await self._get("/works", params=params)).json()
-        papers = []
-        for row in payload.get("results") or []:
-            ids = row.get("ids") or {}
-            location = row.get("primary_location") or {}
-            source = location.get("source") or {}
-            oa = row.get("open_access") or {}
-            papers.append(MetadataPaper(
-                title=_text(row.get("display_name") or row.get("title")), abstract=_openalex_abstract(row.get("abstract_inverted_index")),
-                authors=tuple(_text((item.get("author") or {}).get("display_name")) for item in row.get("authorships") or [] if _text((item.get("author") or {}).get("display_name"))),
-                year=_year(row.get("publication_year")), publication_date=_date(row.get("publication_date")),
-                doi=normalize_doi(row.get("doi") or ids.get("doi")), arxiv_id=normalize_arxiv_id(ids.get("arxiv")),
-                url=_url(location.get("landing_page_url") or row.get("id")), open_access_pdf_url=_url(location.get("pdf_url") or oa.get("oa_url")),
-                is_open_access=bool(oa.get("is_oa")), citation_count=_count(row.get("cited_by_count")), venue=_text(source.get("display_name")),
-                source=self.name, external_id=_text(row.get("id")),
-            ))
-        return SourceSearchResult(self.name, query, tuple(papers), content_checksum(payload))
+        papers = _parse_openalex_works(payload.get("results") or [], self.name)
+        return SourceSearchResult(self.name, query, papers, content_checksum(payload))
+
+    async def related(self, work_id: str, direction: str, *, limit: int) -> SourceSearchResult:
+        """Citation-neighbor expansion: ``forward`` = works citing ``work_id``
+        (cites:), ``backward`` = works cited by it (citations:). Accepts a full
+        ``https://openalex.org/W...`` id or the bare ``W...`` suffix."""
+        relation = {"forward": "cites", "backward": "citations"}.get(direction)
+        if not relation:
+            raise ValueError(f"Unknown citation direction: {direction!r}.")
+        bare = work_id.rsplit("/", 1)[-1]
+        params: dict[str, Any] = {"filter": f"{relation}:{bare}", "per-page": min(limit, 200)}
+        mailto = os.getenv("OPENALEX_MAILTO", "")
+        if mailto:
+            params["mailto"] = mailto
+        payload = (await self._get("/works", params=params)).json()
+        papers = _parse_openalex_works(payload.get("results") or [], self.name)
+        return SourceSearchResult(self.name, f"{direction}:{bare}", papers, content_checksum(payload))
+
+    async def lookup(self, identifier: str) -> MetadataPaper | None:
+        """Direct work lookup by DOI; non-DOI ids and unknown DOIs return None (404)."""
+        doi = normalize_doi(identifier)
+        if not doi:
+            return None
+        params: dict[str, Any] = {}
+        mailto = os.getenv("OPENALEX_MAILTO", "")
+        if mailto:
+            params["mailto"] = mailto
+        try:
+            response = await self._get(f"/works/doi:{doi}", params=params)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                return None
+            raise
+        row = response.json()
+        if not row:
+            return None
+        parsed = _parse_openalex_works([row], self.name)
+        return parsed[0] if parsed else None
 
 
 class CrossrefSource(HttpMetadataSource):
@@ -164,6 +216,37 @@ class CrossrefSource(HttpMetadataSource):
                 venue=_text((row.get("container-title") or [""])[0]), source=self.name, external_id=_text(row.get("DOI")),
             ))
         return SourceSearchResult(self.name, query, tuple(papers), content_checksum(payload))
+
+    async def lookup(self, identifier: str) -> MetadataPaper | None:
+        """Direct work lookup by DOI; non-DOI ids and unknown DOIs return None (404)."""
+        doi = normalize_doi(identifier)
+        if not doi:
+            return None
+        params: dict[str, Any] = {}
+        mailto = os.getenv("CROSSREF_MAILTO", "")
+        if mailto:
+            params["mailto"] = mailto
+        try:
+            response = await self._get(f"/works/{doi}", params=params)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                return None
+            raise
+        row = response.json().get("message") or {}
+        if not row:
+            return None
+        date_parts = ((row.get("published") or {}).get("date-parts") or [[None]])[0]
+        publication_date = "-".join(f"{int(value):02d}" if index else str(value) for index, value in enumerate(date_parts) if value is not None) or None
+        links = row.get("link") or []
+        pdf = next((_url(item.get("URL")) for item in links if "pdf" in _text(item.get("content-type")).lower()), None)
+        licenses = row.get("license") or []
+        return MetadataPaper(
+            title=_text((row.get("title") or [""])[0]), abstract=_strip_markup(_text(row.get("abstract"))),
+            authors=tuple(" ".join(filter(None, (_text(item.get("given")), _text(item.get("family"))))).strip() for item in row.get("author") or []),
+            year=_year(date_parts[0] if date_parts else None), publication_date=_date(publication_date), doi=normalize_doi(row.get("DOI")),
+            url=_url(row.get("URL")), open_access_pdf_url=pdf, is_open_access=bool(pdf and licenses), citation_count=_count(row.get("is-referenced-by-count")),
+            venue=_text((row.get("container-title") or [""])[0]), source=self.name, external_id=_text(row.get("DOI")),
+        )
 
 
 class ArxivSource(HttpMetadataSource):
@@ -278,6 +361,25 @@ def _openalex_abstract(index: Any) -> str:
         return ""
     positions = [(int(position), str(token)) for token, values in index.items() for position in values]
     return " ".join(token for _, token in sorted(positions))
+
+
+def _parse_openalex_works(rows: list[dict[str, Any]], source_name: str) -> tuple[MetadataPaper, ...]:
+    papers: list[MetadataPaper] = []
+    for row in rows:
+        ids = row.get("ids") or {}
+        location = row.get("primary_location") or {}
+        source = location.get("source") or {}
+        oa = row.get("open_access") or {}
+        papers.append(MetadataPaper(
+            title=_text(row.get("display_name") or row.get("title")), abstract=_openalex_abstract(row.get("abstract_inverted_index")),
+            authors=tuple(_text((item.get("author") or {}).get("display_name")) for item in row.get("authorships") or [] if _text((item.get("author") or {}).get("display_name"))),
+            year=_year(row.get("publication_year")), publication_date=_date(row.get("publication_date")),
+            doi=normalize_doi(row.get("doi") or ids.get("doi")), arxiv_id=normalize_arxiv_id(ids.get("arxiv")),
+            url=_url(location.get("landing_page_url") or row.get("id")), open_access_pdf_url=_url(location.get("pdf_url") or oa.get("oa_url")),
+            is_open_access=bool(oa.get("is_oa")), citation_count=_count(row.get("cited_by_count")), venue=_text(source.get("display_name")),
+            source=source_name, external_id=_text(row.get("id")),
+        ))
+    return tuple(papers)
 
 
 def _node_text(node: ET.Element, path: str, namespaces: dict[str, str]) -> str:

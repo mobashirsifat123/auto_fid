@@ -1,0 +1,1125 @@
+{
+  "spec_version": 1,
+  "template_title": "FastTrack Academic Research Paper Template",
+  "source": {
+    "file": "FastTrack-Academic-paper-template.pdf",
+    "bundled_at": "src/autoresearch/skills/manuscript/FastTrack-Academic-paper-template.pdf",
+    "pages": 5,
+    "extracted_with": "pypdf 6.17.0"
+  },
+  "parameters": {
+    "abstract": {
+      "word_min": 150,
+      "word_max": 250,
+      "parts": [
+        "Background",
+        "Gap in Knowledge",
+        "Contribution",
+        "Population & Methods",
+        "Results",
+        "Conclusion"
+      ]
+    },
+    "keywords": {
+      "min": 3,
+      "max": 6
+    },
+    "title": {
+      "max_words": 20,
+      "vague_terms_blocklist": [
+        "an analysis",
+        "a study of",
+        "an investigation",
+        "new insights"
+      ]
+    },
+    "limitations": {
+      "min": 3
+    },
+    "results": {
+      "interpretation_terms_blocklist": [
+        "shows that",
+        "suggests",
+        "demonstrates the importance",
+        "because",
+        "indicates",
+        "implies"
+      ]
+    },
+    "section_order": [
+      "Introduction",
+      "Literature Review",
+      "Methodology",
+      "Results",
+      "Discussion",
+      "References",
+      "Appendices"
+    ],
+    "methodology_fields": [
+      "Study Design",
+      "Data Collection",
+      "Sample & Eligibility",
+      "Data Analysis",
+      "Ethical Considerations"
+    ],
+    "inside_out_order": [
+      "Methodology",
+      "Results",
+      "Discussion",
+      "Introduction",
+      "Abstract",
+      "Keywords",
+      "Title"
+    ]
+  },
+  "rules": [
+    {
+      "id": "T001",
+      "page": 1,
+      "quote": "Academic Research Paper Template",
+      "type": "style-guide",
+      "enforcement": "Template identity; all subsequent rules derive from this document.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T002",
+      "page": 1,
+      "quote": "Title: (Concise and informative, accurately reflecting the content of the paper)",
+      "type": "deterministic-check",
+      "enforcement": "Title length and specificity enforced on every generated manuscript.",
+      "enforcement_point": "application/manuscript.py:template_audit (title checks)"
+    },
+    {
+      "id": "T003",
+      "page": 1,
+      "quote": "• The title should be specific, accurately summarizing the study.",
+      "type": "deterministic-check",
+      "enforcement": "Title must contain a keyword from the evidence-derived keyword set.",
+      "enforcement_point": "application/manuscript.py:template_audit (title keyword check)"
+    },
+    {
+      "id": "T004",
+      "page": 1,
+      "quote": "• Avoid vague terms; be precise and use keywords that enhance discoverability.",
+      "type": "deterministic-check",
+      "enforcement": "Vague-term blocklist rejected in titles (deterministic + model drafts).",
+      "enforcement_point": "application/manuscript.py:template_audit (title vague-term blocklist)"
+    },
+    {
+      "id": "T005",
+      "page": 1,
+      "quote": "• Consider framing the title to reflect the research question or main finding.",
+      "type": "writer-prompt",
+      "enforcement": "Deterministic title embeds the candidate method and an evidence-derived keyword.",
+      "enforcement_point": "application/manuscript.py:_title"
+    },
+    {
+      "id": "T006",
+      "page": 1,
+      "quote": "General Writing Guidelines:",
+      "type": "style-guide",
+      "enforcement": "Section header; guidelines below.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T007",
+      "page": 1,
+      "quote": "• Follow the PEER structure: Point, Evidence, Explanation, Repeat/Link .",
+      "type": "writer-prompt",
+      "enforcement": "Introduction and Literature Review paragraphs follow Point/Evidence/Explanation/Repeat-Link; deterministic builder emits labeled PEER blocks; model-writer system prompt mandates PEER.",
+      "enforcement_point": "application/manuscript.py:_markdown (PEER blocks) + _model_draft system prompt"
+    },
+    {
+      "id": "T008",
+      "page": 1,
+      "quote": "• Use active voice for clarity and engagement.",
+      "type": "style-guide",
+      "enforcement": "Not deterministically enforceable; model-writer prompt instructs active voice; prose audit reports passive tell density.",
+      "enforcement_point": "application/manuscript.py:_model_draft system prompt + application/prose_style.py:prose_audit"
+    },
+    {
+      "id": "T009",
+      "page": 1,
+      "quote": "• Maintain logical flow and coherence between sections.",
+      "type": "style-guide",
+      "enforcement": "Enforced structurally via section order check.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order)"
+    },
+    {
+      "id": "T010",
+      "page": 1,
+      "quote": "• Support claims with credible sources and properly cite them.",
+      "type": "deterministic-check",
+      "enforcement": "Every in-text citation key must exist in the BibTeX built from stored paper metadata; unknown keys rejected.",
+      "enforcement_point": "application/manuscript.py:_verify_citations (existing)"
+    },
+    {
+      "id": "T011",
+      "page": 1,
+      "quote": "• Ensure conciseness and precision in language while avoiding unnecessary",
+      "type": "style-guide",
+      "enforcement": "Deterministic prose is assembled from evidence fields; prose audit flags tell-density.",
+      "enforcement_point": "application/prose_style.py:prose_audit"
+    },
+    {
+      "id": "T012",
+      "page": 1,
+      "quote": "jargon.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the conciseness guideline.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T013",
+      "page": 1,
+      "quote": "Recommended Writing Order: Follow the Inside-Out Writing Method :",
+      "type": "deterministic-check",
+      "enforcement": "Inside-Out Writing Method enforced: methodology, results, discussion built before introduction/abstract/title; emission order recorded in template_audit.json.",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly) + template_audit.json:inside_out_order"
+    },
+    {
+      "id": "T014",
+      "page": 1,
+      "quote": "• Start with Methods (easiest to write as it describes what was done).",
+      "type": "deterministic-check",
+      "enforcement": "Methodology content assembled first in the inside-out order.",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly)"
+    },
+    {
+      "id": "T015",
+      "page": 1,
+      "quote": "• Move to Results (simply report the findings).",
+      "type": "deterministic-check",
+      "enforcement": "Results content assembled second in the inside-out order.",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly)"
+    },
+    {
+      "id": "T016",
+      "page": 1,
+      "quote": "• Write the Discussion (interpret findings in relation to existing research).",
+      "type": "deterministic-check",
+      "enforcement": "Discussion content assembled third in the inside-out order.",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly)"
+    },
+    {
+      "id": "T017",
+      "page": 1,
+      "quote": "• Complete the Introduction and Abstract together (ensuring alignment with the",
+      "type": "deterministic-check",
+      "enforcement": "Introduction and abstract assembled after results/discussion, both composed from already-built sections.",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly)"
+    },
+    {
+      "id": "T018",
+      "page": 1,
+      "quote": "full paper).",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the inside-out rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T019",
+      "page": 1,
+      "quote": "Abstract: (150-250 words summarizing the research problem, methods, key findings,",
+      "type": "deterministic-check",
+      "enforcement": "Complete manuscripts must have an abstract of 150-250 words; fail-closed otherwise.",
+      "enforcement_point": "application/manuscript.py:template_audit (abstract word count)"
+    },
+    {
+      "id": "T020",
+      "page": 1,
+      "quote": "and conclusion)",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the abstract word-count rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T021",
+      "page": 1,
+      "quote": "• Background: Why is this topic relevant now? What is the big debate or concern?",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Background'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T022",
+      "page": 1,
+      "quote": "• Gap in Knowledge: What is missing from current research?",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Gap in Knowledge'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T023",
+      "page": 1,
+      "quote": "• Study Contr ibution: How does your study address this gap?",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Contribution'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T024",
+      "page": 1,
+      "quote": "• Population & Methods: Outline study design, inclusion criteria, and data",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Population & Methods'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T025",
+      "page": 1,
+      "quote": "sources.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the Population & Methods part.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T026",
+      "page": 1,
+      "quote": "• Results: Key findings that are emphasized in the discussion.",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Results'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T027",
+      "page": 1,
+      "quote": "• Conclusion: Main takeaway and implications for future research.",
+      "type": "deterministic-check",
+      "enforcement": "Abstract must contain the labeled part 'Conclusion'.",
+      "enforcement_point": "application/manuscript.py:_abstract + template_audit (six labeled parts)"
+    },
+    {
+      "id": "T028",
+      "page": 2,
+      "quote": "Keywords: (3-6 relevant terms for indexing and searching)",
+      "type": "deterministic-check",
+      "enforcement": "Keywords block with 3-6 terms, derived ONLY from Findings Memory keywords and paper metadata.",
+      "enforcement_point": "application/manuscript.py:_keywords + template_audit (keyword count)"
+    },
+    {
+      "id": "T029",
+      "page": 2,
+      "quote": "(Tip: We recommend writing a structured abstract and then ‘suturing’ it back together if",
+      "type": "writer-prompt",
+      "enforcement": "Structured (labeled) abstract generated; re-suturing for journal style is an author step.",
+      "enforcement_point": "application/manuscript.py:_abstract (structured)"
+    },
+    {
+      "id": "T030",
+      "page": 2,
+      "quote": "you need an unstructured abstract. Be sure to check journal formatting for the specific",
+      "type": "style-guide",
+      "enforcement": "Journal-specific formatting is the author's responsibility; not machine-enforced.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T031",
+      "page": 2,
+      "quote": "abstract length and formatting style)",
+      "type": "style-guide",
+      "enforcement": "Journal-specific formatting is the author's responsibility; not machine-enforced.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T032",
+      "page": 2,
+      "quote": "1. Introduction",
+      "type": "deterministic-check",
+      "enforcement": "Section must appear and precede all later sections per the template order.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order)"
+    },
+    {
+      "id": "T033",
+      "page": 2,
+      "quote": "The introduction consists of three essential parts:",
+      "type": "deterministic-check",
+      "enforcement": "Introduction must contain exactly the three template parts as labeled subsections.",
+      "enforcement_point": "application/manuscript.py:_markdown + template_audit (three-part introduction)"
+    },
+    {
+      "id": "T034",
+      "page": 2,
+      "quote": "• Why is this topic relevant now? Frame the issue within a larger debate or",
+      "type": "deterministic-check",
+      "enforcement": "Introduction part 1 label present; content quoted from the review gap statement/seed topic.",
+      "enforcement_point": "application/manuscript.py:_markdown (Introduction part 1)"
+    },
+    {
+      "id": "T035",
+      "page": 2,
+      "quote": "concern.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of Introduction part 1.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T036",
+      "page": 2,
+      "quote": "o Example: Ongoing debate about air pollution and COVID-19",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only; not applicable to this pipeline's computational studies.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T037",
+      "page": 2,
+      "quote": "transmission.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T038",
+      "page": 2,
+      "quote": "o Example: Rising unemployment rates and their impact on mental health.",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T039",
+      "page": 2,
+      "quote": "• Existing state of knowledge and the gap in knowledge",
+      "type": "deterministic-check",
+      "enforcement": "Introduction part 2 label present; content built from the review's critiques and counter-evidence.",
+      "enforcement_point": "application/manuscript.py:_markdown (Introduction part 2)"
+    },
+    {
+      "id": "T040",
+      "page": 2,
+      "quote": "o Example: Prior studies show mixed results, outdated findings, or weak",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T041",
+      "page": 2,
+      "quote": "methodologies.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T042",
+      "page": 2,
+      "quote": "o Use others' critiques to highlight gaps or inconsistencies in the literature.",
+      "type": "writer-prompt",
+      "enforcement": "Gap part must be built from the review's critiques/counter-evidence; deterministic builder uses why_unsolved + counter-evidence claims; model-writer prompt requires it.",
+      "enforcement_point": "application/manuscript.py:_markdown + _model_draft system prompt"
+    },
+    {
+      "id": "T043",
+      "page": 2,
+      "quote": "• What did your study do to fill this gap? Clearly define the study’s value and",
+      "type": "deterministic-check",
+      "enforcement": "Introduction part 3 label present; content from the frozen methodology and executed spec.",
+      "enforcement_point": "application/manuscript.py:_markdown (Introduction part 3)"
+    },
+    {
+      "id": "T044",
+      "page": 2,
+      "quote": "contribution.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of Introduction part 3.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T045",
+      "page": 2,
+      "quote": "o Example: Analyzing disciplines previously overlooked, incorporating the",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T046",
+      "page": 2,
+      "quote": "latest studies.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T047",
+      "page": 2,
+      "quote": "o If applicable, justify why a systematic review was conducted instead of a",
+      "type": "writer-prompt",
+      "enforcement": "When the study is a systematic review, justify it; computational evaluations state their design honestly instead.",
+      "enforcement_point": "application/manuscript.py:_markdown + _model_draft system prompt"
+    },
+    {
+      "id": "T048",
+      "page": 2,
+      "quote": "meta-analysis.",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the systematic-review justification rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T049",
+      "page": 3,
+      "quote": "(Tip: Keep sentences concise and use active voice. Be sure the GAP emerges clearly. Avoid",
+      "type": "writer-prompt",
+      "enforcement": "Model-writer prompt; deterministic builder states the gap verbatim from the review record.",
+      "enforcement_point": "application/manuscript.py:_model_draft system prompt"
+    },
+    {
+      "id": "T050",
+      "page": 3,
+      "quote": "overloading the introduction with unnecessary background information.)",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the introduction style rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T051",
+      "page": 3,
+      "quote": "2. Literature Review (optional - more relevant to social",
+      "type": "deterministic-check",
+      "enforcement": "Section included when literature evidence exists, omitted otherwise; order enforced.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order, Literature Review conditional)"
+    },
+    {
+      "id": "T052",
+      "page": 3,
+      "quote": "sciences)",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the conditional Literature Review rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T053",
+      "page": 3,
+      "quote": "• Overview of Existing Research: Summarize key studies related to your topic.",
+      "type": "deterministic-check",
+      "enforcement": "Literature Review rows built from stored paper metadata (title, year, method, abstract).",
+      "enforcement_point": "application/manuscript.py:_markdown (Literature Review)"
+    },
+    {
+      "id": "T054",
+      "page": 3,
+      "quote": "• Gaps in Literature: Identify contradictions, outdated studies, or methodological",
+      "type": "writer-prompt",
+      "enforcement": "Contradictions come from the review's counter-evidence claims; paper limitations surfaced from the evidence matrix.",
+      "enforcement_point": "application/manuscript.py:_markdown (Literature Review gaps)"
+    },
+    {
+      "id": "T055",
+      "page": 3,
+      "quote": "weaknesses.",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the gaps rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T056",
+      "page": 3,
+      "quote": "• Theoretical Framework (if applicable): Introduce key theories or models",
+      "type": "writer-prompt",
+      "enforcement": "Emitted only when recorded in the review; otherwise honest marker.",
+      "enforcement_point": "application/manuscript.py:_markdown (honest marker)"
+    },
+    {
+      "id": "T057",
+      "page": 3,
+      "quote": "guiding your study.",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the theoretical framework rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T058",
+      "page": 3,
+      "quote": "(Tip: Use PEER to structure each paragraph—start with a clear point, provide evidence,",
+      "type": "writer-prompt",
+      "enforcement": "PEER labels emitted per paper entry; model-writer prompt mandates PEER.",
+      "enforcement_point": "application/manuscript.py:_markdown (PEER blocks) + _model_draft system prompt"
+    },
+    {
+      "id": "T059",
+      "page": 3,
+      "quote": "explain its relevance, and link to the next idea.)",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the PEER rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T060",
+      "page": 3,
+      "quote": "3. Methodology",
+      "type": "deterministic-check",
+      "enforcement": "Section must follow the template order.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order)"
+    },
+    {
+      "id": "T061",
+      "page": 3,
+      "quote": "• Study Design: Describe whether the study is qualitative, quantitative, or mixed-",
+      "type": "deterministic-check",
+      "enforcement": "Methodology field 'Study Design' rendered from the freeze; missing values are reported as limitations, never invented.",
+      "enforcement_point": "novelty/methodology.py:METHODOLOGY_SCHEMA (study_design) + application/manuscript.py:_markdown"
+    },
+    {
+      "id": "T062",
+      "page": 3,
+      "quote": "methods.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the Study Design field.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T063",
+      "page": 3,
+      "quote": "• Data Collection: Specify databases, inclusion/exclusion criteria, and search",
+      "type": "deterministic-check",
+      "enforcement": "Methodology field 'Data Collection' rendered from the freeze + spec dataset identity; missing values reported as limitations.",
+      "enforcement_point": "novelty/methodology.py:METHODOLOGY_SCHEMA (data_collection) + application/manuscript.py:_markdown"
+    },
+    {
+      "id": "T064",
+      "page": 3,
+      "quote": "strategy.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the Data Collection field.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T065",
+      "page": 3,
+      "quote": "• Sample & Eligibility: Describe study population and selection process.",
+      "type": "deterministic-check",
+      "enforcement": "Methodology field 'Sample & Eligibility' rendered from the freeze + spec splits/seeds; missing values reported as limitations.",
+      "enforcement_point": "novelty/methodology.py:METHODOLOGY_SCHEMA (sample_and_eligibility) + application/manuscript.py:_markdown"
+    },
+    {
+      "id": "T066",
+      "page": 3,
+      "quote": "• Data Analysis: Outline the analytical approach (e.g., thematic analysis,",
+      "type": "deterministic-check",
+      "enforcement": "Methodology field 'Data Analysis' rendered from the freeze + preregistered statistical plan; missing values reported as limitations.",
+      "enforcement_point": "novelty/methodology.py:METHODOLOGY_SCHEMA (data_analysis) + application/manuscript.py:_markdown"
+    },
+    {
+      "id": "T067",
+      "page": 3,
+      "quote": "statistical tests).",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the Data Analysis field.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T068",
+      "page": 3,
+      "quote": "• Ethical Considerations: Mention any ethical approvals or considerations (e.g.,",
+      "type": "deterministic-check",
+      "enforcement": "Methodology field 'Ethical Considerations' rendered from the freeze; missing values reported as limitations, never invented.",
+      "enforcement_point": "novelty/methodology.py:METHODOLOGY_SCHEMA (ethical_considerations) + application/manuscript.py:_markdown"
+    },
+    {
+      "id": "T069",
+      "page": 3,
+      "quote": "informed consent).",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the Ethical Considerations field.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T070",
+      "page": 3,
+      "quote": "(Tip: Use direct language to describe what was done and justify methodological choices.",
+      "type": "writer-prompt",
+      "enforcement": "Cookbook-style Methodology; deterministic builder emits the frozen procedure steps in order; model-writer prompt mandates it.",
+      "enforcement_point": "application/manuscript.py:_markdown (cookbook procedure) + _model_draft system prompt"
+    },
+    {
+      "id": "T071",
+      "page": 3,
+      "quote": "Keep it as linear as possible as if you were writing a cookbook for someone to recreate your",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the cookbook rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T072",
+      "page": 3,
+      "quote": "recipe)",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the cookbook rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T073",
+      "page": 3,
+      "quote": "4. Results",
+      "type": "deterministic-check",
+      "enforcement": "Section must follow the template order.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order)"
+    },
+    {
+      "id": "T074",
+      "page": 3,
+      "quote": "• Present key findings concisel y. Clearly state the most important findings.",
+      "type": "deterministic-check",
+      "enforcement": "Results built from the deterministic table engine, decision gates, and statistical tests.",
+      "enforcement_point": "application/manuscript.py:_markdown (Results)"
+    },
+    {
+      "id": "T075",
+      "page": 4,
+      "quote": "• Use visuals: Include tables, graphs, or figures where relevant to summarise the",
+      "type": "deterministic-check",
+      "enforcement": "Results must contain tables; when measurements exist, a deterministic figure (SVG + TikZ) must be generated and referenced.",
+      "enforcement_point": "application/manuscript.py:_figures + template_audit (tables/figures)"
+    },
+    {
+      "id": "T076",
+      "page": 4,
+      "quote": "results.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the visuals rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T077",
+      "page": 4,
+      "quote": "• Highlight trends, patterns, or statistical outcomes. Identify recurring themes",
+      "type": "deterministic-check",
+      "enforcement": "Statistical outcomes come from the stored statistical tests and effect sizes.",
+      "enforcement_point": "application/manuscript.py:_markdown (Results)"
+    },
+    {
+      "id": "T078",
+      "page": 4,
+      "quote": "or statistical outcomes",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the statistical-outcomes rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T079",
+      "page": 4,
+      "quote": "• Find a structure that enables your main points to emerge",
+      "type": "style-guide",
+      "enforcement": "Structure choice is an author step; the deterministic Results table provides the structure.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T080",
+      "page": 4,
+      "quote": "(Tip: Avoid interpretation in this section; focus on presenting objective data. Use clear",
+      "type": "deterministic-check",
+      "enforcement": "Results section must not contain interpretation words; blocklist rejected in deterministic and model drafts.",
+      "enforcement_point": "application/manuscript.py:template_audit (Results interpretation blocklist)"
+    },
+    {
+      "id": "T081",
+      "page": 4,
+      "quote": "subheadings if necessary)",
+      "type": "style-guide",
+      "enforcement": "Subheading choice is an author step.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T082",
+      "page": 4,
+      "quote": "5. Discussion",
+      "type": "deterministic-check",
+      "enforcement": "Section must follow the template order.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order)"
+    },
+    {
+      "id": "T083",
+      "page": 4,
+      "quote": "The discussion follows this structure to explain what the results mean (whereas the",
+      "type": "writer-prompt",
+      "enforcement": "Discussion structure (recap, limitations, strengths, implications) enforced; model-writer prompt mandates it.",
+      "enforcement_point": "application/manuscript.py:_markdown + _model_draft system prompt"
+    },
+    {
+      "id": "T084",
+      "page": 4,
+      "quote": "prior section reported only what the data showed):",
+      "type": "writer-prompt",
+      "enforcement": "Continuation of the Discussion structure rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T085",
+      "page": 4,
+      "quote": "• Recap of What You Found: Summarize key findings.",
+      "type": "deterministic-check",
+      "enforcement": "Discussion must contain the 'Recap of findings' subsection quoting the decision and evidence.",
+      "enforcement_point": "application/manuscript.py:_markdown + template_audit (Discussion subsections)"
+    },
+    {
+      "id": "T086",
+      "page": 4,
+      "quote": "o Example: Our analysis finds evidence that unemployment was",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T087",
+      "page": 4,
+      "quote": "detrimental to mental health.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T088",
+      "page": 4,
+      "quote": "o Key Finding 1 – This association was particularly strong in men.",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T089",
+      "page": 4,
+      "quote": "o Key Finding 2 – However, we did not find this effect among women.",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T090",
+      "page": 4,
+      "quote": "• Study Limitations (at least 3): Discuss general methodological limitations.",
+      "type": "deterministic-check",
+      "enforcement": "Discussion must list at least 3 distinct study limitations (report limitations + uncertainty + dataset bounds + unrun ablations + unspecified freeze fields).",
+      "enforcement_point": "application/manuscript.py:_study_limitations + template_audit (limitations >= 3)"
+    },
+    {
+      "id": "T091",
+      "page": 4,
+      "quote": "o Example: It was not possible to conduct a meta-analysis due to data",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T092",
+      "page": 4,
+      "quote": "inconsistencies.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T093",
+      "page": 4,
+      "quote": "o Example: Sample sizes in included studies varied widely, limiting",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T094",
+      "page": 4,
+      "quote": "generalizability.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T095",
+      "page": 4,
+      "quote": "• Limitations from Studies Themselves (applies to systematic reviews) : Identify",
+      "type": "deterministic-check",
+      "enforcement": "For systematic-review-shaped studies the Discussion lists per-study limitations from the evidence matrix; computational studies mark this honestly as not applicable.",
+      "enforcement_point": "application/manuscript.py:_markdown (Discussion per-study limitations)"
+    },
+    {
+      "id": "T096",
+      "page": 4,
+      "quote": "specific issues in the reviewed studies.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the per-study limitations rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T097",
+      "page": 4,
+      "quote": "o Example: Many included studies had weak methodologies or lacked",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T098",
+      "page": 4,
+      "quote": "longitudinal data.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T099",
+      "page": 4,
+      "quote": "• Strengths of Your Study: Highlight the study’s contributions.",
+      "type": "deterministic-check",
+      "enforcement": "Discussion must contain the 'Strengths' subsection, built from verifiable facts only (preregistered design, verified lineage, checksummed artifacts).",
+      "enforcement_point": "application/manuscript.py:_markdown + template_audit (Discussion subsections)"
+    },
+    {
+      "id": "T100",
+      "page": 4,
+      "quote": "o Example: Comprehensive review of the latest studies in this domain.",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T101",
+      "page": 4,
+      "quote": "• Optional: Coherence with existing research or grey literature.",
+      "type": "writer-prompt",
+      "enforcement": "Optional; emitted only when the review records coherence evidence.",
+      "enforcement_point": "application/manuscript.py:_markdown (optional part)"
+    },
+    {
+      "id": "T102",
+      "page": 4,
+      "quote": "• Optional: Incidental observations—unexpected but noteworthy findings.",
+      "type": "writer-prompt",
+      "enforcement": "Optional; emitted only from measured ablation/robustness artifacts, never invented.",
+      "enforcement_point": "application/manuscript.py:_markdown (optional part)"
+    },
+    {
+      "id": "T103",
+      "page": 4,
+      "quote": "o Example: While focused on mental health, we observed that job loss was",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T104",
+      "page": 4,
+      "quote": "linked to divorce.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T105",
+      "page": 4,
+      "quote": "• Implications for Future Research: Identify gaps that future work should",
+      "type": "deterministic-check",
+      "enforcement": "Discussion must contain the 'Implications for future research' subsection derived from the listed limitations.",
+      "enforcement_point": "application/manuscript.py:_markdown + template_audit (Discussion subsections)"
+    },
+    {
+      "id": "T106",
+      "page": 4,
+      "quote": "address.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the implications rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T107",
+      "page": 5,
+      "quote": "o Example: Future studies should explore how policy interventions can",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T108",
+      "page": 5,
+      "quote": "mitigate mental health impacts of unemployment.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T109",
+      "page": 5,
+      "quote": "• Optional: Implications for Practice or Policy.",
+      "type": "writer-prompt",
+      "enforcement": "Optional; emitted only when the evidence supports it.",
+      "enforcement_point": "application/manuscript.py:_markdown (optional part)"
+    },
+    {
+      "id": "T110",
+      "page": 5,
+      "quote": "o Example: Policymakers should consider targeted support programs for",
+      "type": "style-guide",
+      "enforcement": "Illustrative example only.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T111",
+      "page": 5,
+      "quote": "unemployed individuals.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the illustrative example.",
+      "enforcement_point": "template-spec.json (example)"
+    },
+    {
+      "id": "T112",
+      "page": 5,
+      "quote": "(Tip: Use active voice to emphasize key insights and their relevance. Avoid speculative",
+      "type": "writer-prompt",
+      "enforcement": "Model-writer prompt mandates active voice and no unsupported speculation.",
+      "enforcement_point": "application/manuscript.py:_model_draft system prompt"
+    },
+    {
+      "id": "T113",
+      "page": 5,
+      "quote": "claims that are not supported by your data. But do include these as possible avenues for",
+      "type": "deterministic-check",
+      "enforcement": "Speculative claims allowed ONLY inside the clearly labeled 'Possible interpretations and future work' Discussion part; deterministic audit confines them there.",
+      "enforcement_point": "application/manuscript.py:_markdown (labeled speculative part) + template_audit"
+    },
+    {
+      "id": "T114",
+      "page": 5,
+      "quote": "future research or potential interpretations.)",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the speculation confinement rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T115",
+      "page": 5,
+      "quote": "6. References",
+      "type": "deterministic-check",
+      "enforcement": "Section must follow the template order; every in-text citation appears in References and vice versa.",
+      "enforcement_point": "application/manuscript.py:template_audit (section order) + _verify_citations (existing)"
+    },
+    {
+      "id": "T116",
+      "page": 5,
+      "quote": "• Use appropriate citation style (APA, MLA, Chicago, etc.).",
+      "type": "style-guide",
+      "enforcement": "BibTeX (natbib plainnat) generated from stored paper metadata; journal-specific style is an author step.",
+      "enforcement_point": "application/manuscript.py:_bibtex"
+    },
+    {
+      "id": "T117",
+      "page": 5,
+      "quote": "• Ensure all sources cited in the text are listed here.",
+      "type": "deterministic-check",
+      "enforcement": "Bidirectional citation check: used keys subset of BibTeX keys; BibTeX built only from stored papers.",
+      "enforcement_point": "application/manuscript.py:_verify_citations (existing)"
+    },
+    {
+      "id": "T118",
+      "page": 5,
+      "quote": "• Use Zotero or Endnote or another reference manager",
+      "type": "writer-prompt",
+      "enforcement": "The generated references.bib is a reference-manager import format built from stored metadata.",
+      "enforcement_point": "application/manuscript.py:_bibtex"
+    },
+    {
+      "id": "T119",
+      "page": 5,
+      "quote": "7. Appendices (if applicable)",
+      "type": "deterministic-check",
+      "enforcement": "Appendices section always emitted for complete manuscripts, listing the evidence bundle, raw seed metrics, and exact commands.",
+      "enforcement_point": "application/manuscript.py:_markdown (Appendices) + template_audit (section order)"
+    },
+    {
+      "id": "T120",
+      "page": 5,
+      "quote": "• Supplementary material, such as questionnaires, raw data, or detailed",
+      "type": "deterministic-check",
+      "enforcement": "Appendices list the evidence bundle (ids + checksums), raw seed metrics, and exact recorded commands; never empty filler.",
+      "enforcement_point": "application/manuscript.py:_markdown (Appendices)"
+    },
+    {
+      "id": "T121",
+      "page": 5,
+      "quote": "calculations.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the appendices rule.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T122",
+      "page": 5,
+      "quote": "Final Thoughts",
+      "type": "style-guide",
+      "enforcement": "Process advice section.",
+      "enforcement_point": "template-spec.json"
+    },
+    {
+      "id": "T123",
+      "page": 5,
+      "quote": "• Plan ahead: Writing a strong paper takes time. Avoid last-minute efforts.",
+      "type": "style-guide",
+      "enforcement": "Human process advice; not machine-enforceable.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T124",
+      "page": 5,
+      "quote": "• Stay focused: Ensure each section contributes directly to answering your",
+      "type": "style-guide",
+      "enforcement": "Enforced indirectly by deterministic assembly from evidence; human review step.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T125",
+      "page": 5,
+      "quote": "research question.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the focus rule.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T126",
+      "page": 5,
+      "quote": "• Seek feedback: Engage with peers or mentors for constructive criticism.",
+      "type": "style-guide",
+      "enforcement": "Human step; the pipeline's hostile-reviewer and audit layers are not a substitute for peer review.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T127",
+      "page": 5,
+      "quote": "• Stay organized: Use a reference manager to keep track of sources.",
+      "type": "style-guide",
+      "enforcement": "The pipeline persists BibTeX and the evidence bundle; human organization step.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T128",
+      "page": 5,
+      "quote": "• Think strategically: Consider how your research fits into the broader academic",
+      "type": "style-guide",
+      "enforcement": "Human step; the Introduction's relevance part frames the debate from the review evidence.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T129",
+      "page": 5,
+      "quote": "conversation.",
+      "type": "style-guide",
+      "enforcement": "Continuation of the strategic-thinking rule.",
+      "enforcement_point": "template-spec.json (author step)"
+    },
+    {
+      "id": "T130",
+      "page": 5,
+      "quote": "• Follow the Inside -Out Writing Method: Start with Methods, then Results,",
+      "type": "deterministic-check",
+      "enforcement": "Inside-Out Writing Method enforced (see the Recommended Writing Order rules).",
+      "enforcement_point": "application/manuscript.py:_build (inside-out assembly)"
+    },
+    {
+      "id": "T131",
+      "page": 5,
+      "quote": "followed by Discussion , and finally Introduction and Abstract together.",
+      "type": "deterministic-check",
+      "enforcement": "Continuation of the inside-out rule.",
+      "enforcement_point": "template-spec.json"
+    }
+  ]
+}

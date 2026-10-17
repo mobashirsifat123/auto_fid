@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from uuid import uuid4
 
@@ -18,6 +19,8 @@ from autoresearch.domain.models import (
 )
 from autoresearch.providers.capabilities import ModelRole
 from autoresearch.providers.router import ModelRouter
+
+logger = logging.getLogger(__name__)
 from autoresearch.review.evidence_context import format_evidence_context
 
 CANDIDATE_SCHEMA = {
@@ -115,7 +118,14 @@ class LLMCandidateGenerator:
     def __init__(self, router: ModelRouter) -> None:
         self.router = router
 
-    async def generate(self, gap: ResearchGap, count: int = 5, *, evidence_context: dict | None = None) -> tuple[NoveltyCandidate, ...]:
+    async def generate(self, gap: ResearchGap, count: int = 5, *, evidence_context: dict | None = None, on_candidate=None) -> tuple[NoveltyCandidate, ...]:
+        """Generate candidates concurrently.
+
+        ``on_candidate`` (optional) is invoked with each candidate the moment
+        its model call completes — the pipeline uses it to persist partial
+        progress at this expensive boundary, so an interrupted run leaves
+        recoverable state instead of losing every finished generation.
+        """
         strategies = [
             "limitation root cause elimination",
             "cross-domain mechanism transfer",
@@ -125,12 +135,31 @@ class LLMCandidateGenerator:
         ]
         selected_strategies = strategies[:min(count, len(strategies))]
         grounding_block = format_evidence_context(evidence_context)
-        tasks = [
+        candidates: list[NoveltyCandidate] = []
+        saved: set[str] = set()
+        for coro in asyncio.as_completed([
             self._generate_single(gap, strategy, grounding_block, evidence_context)
             for strategy in selected_strategies
-        ]
-        candidates = await asyncio.gather(*tasks)
-        return tuple(candidates)
+        ]):
+            candidate = await coro
+            candidates.append(candidate)
+            if on_candidate is not None:
+                try:
+                    on_candidate(candidate)
+                    saved.add(candidate.id)
+                except Exception:  # noqa: BLE001 — persistence must not kill generation
+                    logger.exception("on_candidate persistence failed for %s", candidate.id)
+        # Deterministic strategy order (as_completed yields in completion
+        # order; downstream dedup/selection must not depend on it).
+        order = {strategy: index for index, strategy in enumerate(selected_strategies)}
+        ordered = sorted(candidates, key=lambda c: order.get(c.strategy, len(order)))
+        for candidate in ordered:
+            if candidate.id not in saved and on_candidate is not None:
+                try:
+                    on_candidate(candidate)
+                except Exception:  # noqa: BLE001
+                    logger.exception("candidate persistence failed for %s", candidate.id)
+        return tuple(ordered)
 
     async def _generate_single(
         self, gap: ResearchGap, strategy: str, grounding_block: str = "", evidence_context: dict | None = None,

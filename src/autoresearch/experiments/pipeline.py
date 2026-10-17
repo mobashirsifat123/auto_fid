@@ -131,7 +131,7 @@ class ExperimentPipeline:
         logger.info(f"Analysis completed: {analysis.id}")
 
         # 5. Write Report
-        report = await self.report_writer.write(spec, analysis)
+        report = await self.report_writer.write(spec, analysis, repository=self.repository)
         self.repository.save_experiment_report(report)
         logger.info(f"Final report generated: {report.decision}")
 

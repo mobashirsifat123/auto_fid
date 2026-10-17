@@ -25,7 +25,7 @@ from autoresearch.providers.router import ModelRouter
 from autoresearch.review.evidence_context import build_evidence_context
 from autoresearch.storage.repository import ResearchRepository
 
-PROMPT_VERSION = "methodology-freeze-v1"
+PROMPT_VERSION = "methodology-freeze-v2"
 
 METHODOLOGY_SCHEMA = {
     "type": "object",
@@ -57,6 +57,14 @@ METHODOLOGY_SCHEMA = {
         "expected_resource_demands": {"type": "string"},
         "supporting_evidence_claim_ids": {"type": "array", "items": {"type": "string"}},
         "uncertainty_statement": {"type": "string", "description": "What remains uncertain about novelty and scientific validity; never empty"},
+        # FastTrack template Methodology fields (template-spec.json T061-T069):
+        # the manuscript Methodology section renders these verbatim; missing
+        # values are filled with an honest marker and reported as limitations.
+        "study_design": {"type": "string", "description": "Qualitative, quantitative, or mixed-methods study design"},
+        "data_collection": {"type": "string", "description": "Databases, inclusion/exclusion criteria, and search strategy"},
+        "sample_and_eligibility": {"type": "string", "description": "Study population and selection process"},
+        "data_analysis": {"type": "string", "description": "Analytical approach (thematic analysis, statistical tests, ...)"},
+        "ethical_considerations": {"type": "string", "description": "Ethical approvals or considerations (informed consent, ...)"},
     },
     "required": [
         "hypothesis_statement", "predicted_observations", "proposed_mechanism",
@@ -83,7 +91,14 @@ _FIELD_CONTRACT = (
     "- expected_resource_demands: string\n"
     "- supporting_evidence_claim_ids: array of claim IDs from the supplied evidence only\n"
     "- uncertainty_statement: string (mandatory, non-empty)\n"
-    "Every key must be present. Do not invent paper or claim IDs that were not supplied."
+    "- study_design: string (qualitative/quantitative/mixed-methods; the FastTrack template's Study Design field)\n"
+    "- data_collection: string (databases, inclusion/exclusion criteria, search strategy; the template's Data Collection field)\n"
+    "- sample_and_eligibility: string (study population and selection process; the template's Sample & Eligibility field)\n"
+    "- data_analysis: string (analytical approach; the template's Data Analysis field)\n"
+    "- ethical_considerations: string (ethical approvals or considerations; the template's Ethical Considerations field)\n"
+    "Every key must be present. Do not invent paper or claim IDs that were not supplied.\n"
+    "If a template field genuinely does not apply to this computational study, write exactly "
+    "'not specified at freeze time' — the manuscript reports it as a limitation, never invents it."
 )
 
 
@@ -129,37 +144,53 @@ class MethodologyFreezer:
         from autoresearch.review.evidence_context import format_evidence_context
         grounding = format_evidence_context(evidence_context)
 
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You convert a selected research candidate into a frozen, versioned experimental "
+                    "methodology. Be concrete: algorithmic steps, equations or pseudocode, inputs/outputs, "
+                    "and resource demands. Freezing does not certify novelty: the uncertainty_statement "
+                    "must state what remains unverified."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Prompt version: {PROMPT_VERSION}\n"
+                    f"Candidate strategy: {candidate.strategy}\n"
+                    f"Candidate method: {candidate.method}\n"
+                    f"Causal mechanism: {candidate.causal_mechanism}\n"
+                    f"Difference from existing: {candidate.difference_from_existing}\n"
+                    f"Falsification condition: {candidate.falsification_condition}\n"
+                    f"Expected effect: {candidate.expected_effect}\n\n{grounding}\n\n{_FIELD_CONTRACT}"
+                ),
+            },
+        ]
+        # One bounded repair round: a live model occasionally omits a field;
+        # feeding the exact validation error back once is far cheaper than
+        # failing the whole workflow run (owner-reported live stall on
+        # 'expected_resource_demands').
         payload = await self.router.structured_output(
-            ModelRole.RESEARCH_REASONING,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You convert a selected research candidate into a frozen, versioned experimental "
-                        "methodology. Be concrete: algorithmic steps, equations or pseudocode, inputs/outputs, "
-                        "and resource demands. Freezing does not certify novelty: the uncertainty_statement "
-                        "must state what remains unverified."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Prompt version: {PROMPT_VERSION}\n"
-                        f"Candidate strategy: {candidate.strategy}\n"
-                        f"Candidate method: {candidate.method}\n"
-                        f"Causal mechanism: {candidate.causal_mechanism}\n"
-                        f"Difference from existing: {candidate.difference_from_existing}\n"
-                        f"Falsification condition: {candidate.falsification_condition}\n"
-                        f"Expected effect: {candidate.expected_effect}\n\n{grounding}\n\n{_FIELD_CONTRACT}"
-                    ),
-                },
-            ],
+            ModelRole.RESEARCH_REASONING, messages=messages,
             schema={"name": "methodology", "schema": METHODOLOGY_SCHEMA},
-            project_id=candidate.project_id,
-            run_id=candidate.run_id,
+            project_id=candidate.project_id, run_id=candidate.run_id,
             operation="methodology_freeze",
         )
-        payload = _validate(payload, evidence_context)
+        try:
+            payload = _validate(payload, evidence_context)
+        except ValueError as exc:
+            repair_messages = messages + [
+                {"role": "assistant", "content": json.dumps(payload, default=str)[:8000]},
+                {"role": "user", "content": f"VALIDATION FAILED: {exc}\nReturn the corrected FULL JSON object with every required key."},
+            ]
+            payload = await self.router.structured_output(
+                ModelRole.RESEARCH_REASONING, messages=repair_messages,
+                schema={"name": "methodology", "schema": METHODOLOGY_SCHEMA},
+                project_id=candidate.project_id, run_id=candidate.run_id,
+                operation="methodology_freeze_repair",
+            )
+            payload = _validate(payload, evidence_context)
 
         previous = self.repository.latest_methodology_freeze_for_candidate(candidate.id)
         version = (previous.version + 1) if previous else 1
@@ -218,6 +249,30 @@ class MethodologyFreezer:
 def _validate(payload: dict, evidence_context: dict) -> dict:
     """Deterministic schema/enforcement checks — prompt instructions alone do
     not enforce this contract. Raises ValueError on malformed output."""
+    # Logistics fields may be filled with explicit, honest defaults when the
+    # model omits them: they are planning details, never scientific content.
+    # The scientific core (hypothesis, predictions, mechanism, falsification,
+    # algorithm, procedure, uncertainty) must come from the model.
+    _LOGISTICS_DEFAULTS = {
+        "implementation_requirements": "not specified at freeze time; verify against the experiment environment before execution",
+        "expected_resource_demands": "not specified at freeze time; estimate before execution approval",
+    }
+    for field, default in _LOGISTICS_DEFAULTS.items():
+        if not payload.get(field):
+            payload[field] = default
+    # FastTrack template Methodology fields: honest markers when the model
+    # omits them. The manuscript Methodology reports these as limitations
+    # rather than inventing content (template-spec.json T061-T069).
+    _TEMPLATE_FIELD_DEFAULTS = {
+        "study_design": "not specified at freeze time",
+        "data_collection": "not specified at freeze time",
+        "sample_and_eligibility": "not specified at freeze time",
+        "data_analysis": "not specified at freeze time",
+        "ethical_considerations": "not specified at freeze time",
+    }
+    for field, default in _TEMPLATE_FIELD_DEFAULTS.items():
+        if not str(payload.get(field) or "").strip():
+            payload[field] = default
     required = METHODOLOGY_SCHEMA["required"]
     missing = [key for key in required if not payload.get(key)]
     if missing:

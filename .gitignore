@@ -52,6 +52,9 @@ logs/
 .cache/
 *.cache
 
+# === Agent runtime droppings (never part of the repo) ===
+.playwright-mcp/
+
 # === Large media / archives / raw outputs ===
 *.mp4
 *.avi
@@ -75,7 +78,8 @@ Thumbs.db
 # Research workspace content that predates the tool release; retained locally.
 /.gitmodules
 /.agents/
-/.autoresearch/
+/.autoresearch/*
+!/.autoresearch/config.example.toml
 /.cbl_remote_stage/
 /.commandcode/
 /.serena/

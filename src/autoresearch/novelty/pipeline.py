@@ -13,11 +13,12 @@ from autoresearch.novelty.prior_art_checker import EvidenceBackedPriorArtChecker
 from autoresearch.novelty.selection import PortfolioSelector
 from autoresearch.storage.repository import ResearchRepository
 from autoresearch.review.evidence_context import build_evidence_context
+from autoresearch.providers.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
 # Maximum revision rounds for candidates with partial overlap
-MAX_REVISION_ROUNDS = 2
+MAX_REVISION_ROUNDS = 1
 
 
 import asyncio
@@ -38,7 +39,8 @@ class NoveltyPipeline:
         self.critic = critic
         self.selector = selector
 
-    async def generate_portfolio(self, gap: ResearchGap) -> NoveltyPortfolio:
+    async def generate_portfolio(self, gap: ResearchGap, *, findings: list[dict] | None = None) -> NoveltyPortfolio:
+        findings = findings or []
         logger.info(f"Starting novelty generation for gap {gap.id}")
 
         # Literature grounding (HKUDS mechanism, adapted): the generator sees
@@ -52,6 +54,8 @@ class NoveltyPipeline:
             supporting_claim_ids=gap.supporting_claim_ids,
             counter_claim_ids=gap.counter_evidence_claim_ids,
         )
+        if findings:
+            evidence_context["findings_memory"] = findings
         logger.info(
             "Evidence context for gap %s: %d papers, %d claims, %d counter-claims.",
             gap.id,
@@ -60,10 +64,22 @@ class NoveltyPipeline:
             len(evidence_context.get("counter_evidence_claims", [])),
         )
 
-        # 1. Generate Candidates
-        raw_candidates = await self.generator.generate(gap, count=5, evidence_context=evidence_context)
-        for candidate in raw_candidates:
+        # 1. Generate Candidates — each one is persisted the moment its model
+        # call completes (checkpoint at this expensive boundary), so an
+        # interrupted run leaves recoverable state; progress is reported live.
+        from autoresearch.application.progress import report as _progress
+        generated = {"count": 0}
+
+        def _persist_candidate(candidate) -> None:
             self.repository.save_novelty_candidate(candidate)
+            generated["count"] += 1
+            _progress(
+                "novelty.candidates", generated["count"], 5,
+                detail=f"{generated['count']}/5 candidates generated",
+                remaining=["prior-art", "critique", "selection"],
+            )
+
+        raw_candidates = await self.generator.generate(gap, count=5, evidence_context=evidence_context, on_candidate=_persist_candidate)
 
         # N3: Semantic deduplication before prior-art check
         candidates = _deduplicate_candidates(list(raw_candidates))
@@ -74,13 +90,33 @@ class NoveltyPipeline:
 
         # N4: Concurrent Prior-Art + Critique Processing
         async def process_candidate(candidate):
+            # Cheap deterministic rejection BEFORE any model call (Co-Scientist
+            # tournament pruning, adapted; the expensive critic never sees a
+            # candidate that deterministically cannot stand):
+            #   1. unfalsifiable — no falsification condition or no minimal
+            #      validating experiment;
+            #   2. refuted-memory — lexically the same method a Findings
+            #      Memory entry already refuted for this question.
+            if not (candidate.falsification_condition.strip() and candidate.minimum_validating_experiment.strip()):
+                self.repository.append_api_event(candidate.run_id, "novelty.candidate_rejected_cheap", {
+                    "candidate_id": candidate.id, "reason": "unfalsifiable: missing falsification condition or minimal validating experiment",
+                })
+                return None
+            refuted_match = _refuted_finding_match(candidate, findings)
+            if refuted_match:
+                self.repository.append_api_event(candidate.run_id, "novelty.candidate_rejected_cheap", {
+                    "candidate_id": candidate.id, "reason": f"refuted_finding:{refuted_match}",
+                    "note": "Findings Memory records this mechanism as refuted for this question; repropose only with an explicit mechanism change",
+                })
+                return None
+
             assessment = await self.prior_art_checker.check(candidate)
             self.repository.save_prior_art_assessment(assessment)
             if assessment.overlap_status.value == "known_method":
                 logger.info(f"Candidate {candidate.id} rejected due to overlap: {assessment.overlap_status}")
                 return None
 
-            critique = await self.critic.evaluate(candidate)
+            critique = await self.critic.evaluate(candidate, prior_art=assessment)
             self.repository.save_novelty_critique(critique)
 
             # Iterative refinement: up to MAX_REVISION_ROUNDS for partial overlap
@@ -100,7 +136,9 @@ class NoveltyPipeline:
                 self.repository.save_prior_art_assessment(reassessment)
                 candidate = revised
                 assessment = reassessment
-                critique = await self.critic.evaluate(revised)
+                if assessment.overlap_status.value in ("known_method", "unsupported"):
+                    return None
+                critique = await self.critic.evaluate(revised, prior_art=assessment)
                 self.repository.save_novelty_critique(critique)
 
                 if assessment.overlap_status.value != "partial_overlap":
@@ -134,8 +172,14 @@ class NoveltyPipeline:
 
             return (candidate, critique, assessment)
 
-        results = await asyncio.gather(*[process_candidate(c) for c in candidates])
-        for res in results:
+        results = await asyncio.gather(*[process_candidate(c) for c in candidates], return_exceptions=True)
+        for original_candidate, res in zip(candidates, results):
+            if isinstance(res, Exception):
+                self.repository.append_api_event(original_candidate.run_id, "novelty.candidate_failed", {
+                    "candidate_id": original_candidate.id,
+                    "error": redact_text(f"{type(res).__name__}: {res}"),
+                })
+                continue
             if res is not None:
                 candidate, critique, assessment = res
                 valid_candidates.append(candidate)
@@ -162,7 +206,7 @@ class NoveltyPipeline:
 
         if not valid_candidates:
             self._save_grounding_record(gap, evidence_context)
-            raise RuntimeError("Novelty pipeline produced no candidate that passed the scientific gates.")
+            raise RuntimeError("insufficient_evidence: novelty pipeline produced no candidate that passed the scientific gates.")
 
         # 3. Portfolio Selection (diversity-aware)
         portfolio = self.selector.select(gap.project_id, gap.run_id, valid_candidates, critiques)
@@ -227,6 +271,25 @@ class NoveltyPipeline:
             ))
         except OSError:
             logger.exception("Failed to persist the novelty grounding record for run %s; continuing.", gap.run_id)
+
+
+def _refuted_finding_match(candidate, findings: list[dict], threshold: float = 0.5) -> str | None:
+    """Deterministic duplicate-of-refuted detection: ≥50% of the candidate's
+    method/mechanism tokens appear in a refuted finding's lesson (the lesson
+    quotes the refuted method and its conditions). Lexical by design —
+    inspectable, no claimed semantic understanding."""
+    words = set(f"{candidate.method} {candidate.causal_mechanism}".lower().split())
+    if not words:
+        return None
+    for finding in findings:
+        if str(finding.get("status")) != "refuted_hypothesis":
+            continue
+        lesson_words = set(str(finding.get("lesson") or "").lower().split())
+        if not lesson_words:
+            continue
+        if len(words & lesson_words) / len(words) >= threshold:
+            return str(finding.get("finding_id") or "")
+    return None
 
 
 def _deduplicate_candidates(candidates: list, threshold: float = 0.65) -> list:

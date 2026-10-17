@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from statistics import NormalDist
 from uuid import uuid4
 
 from autoresearch.domain.models import (
@@ -42,6 +43,7 @@ SPEC_SCHEMA = {
         "metric_direction": {"type": "object", "additionalProperties": {"type": "string", "enum": ["maximize", "minimize"]}},
         "minimum_meaningful_effect": {"type": "object", "additionalProperties": {"type": "number"}},
         "required_seed_count": {"type": "integer", "minimum": 1},
+        "required_artifacts": {"type": "array", "items": {"type": "string"}, "description": "Artifact types this protocol actually produces (subset of the standard contract); omit for the full standard set"},
         "network_policy": {"type": "string", "enum": ["disabled", "allowlisted"]},
         "target_worker": {"type": "string"},
         "expected_effect_size": {"type": "number", "description": "Expected Cohen's d effect size for power analysis"},
@@ -76,17 +78,7 @@ ADVERSARIAL_SCHEMA = {
     "additionalProperties": False,
 }
 
-SPEC_SELECTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "selected_index": {"type": "integer", "minimum": 0, "maximum": 2},
-        "selection_rationale": {"type": "string"},
-    },
-    "required": ["selected_index", "selection_rationale"],
-    "additionalProperties": False,
-}
-
-PROMPT_VERSION = "experiment-planner-v4"
+PROMPT_VERSION = "experiment-planner-v5"
 
 # Baseline anchoring adapted from HKUDS/AI-Researcher @ f9a6f8480860c193afff600eeffe3defcee8a978
 # (research_agent/inno/agents/inno_agent/idea_agent.py): designs must be tied to
@@ -127,6 +119,7 @@ _FIELD_CONTRACT = (
     "- metric_direction: object mapping metric name to 'maximize' or 'minimize'\n"
     "- minimum_meaningful_effect: object mapping metric name to a number\n"
     "- required_seed_count: integer\n"
+    "- required_artifacts: array of strings (artifact types this protocol actually produces; omit for the full standard set)\n"
     "- network_policy: 'disabled' or 'allowlisted'\n"
     "- target_worker: string\n"
     "- expected_effect_size: number (expected Cohen's d)\n"
@@ -134,9 +127,6 @@ _FIELD_CONTRACT = (
     "- interpretation_rules: array of strings (pre-registered rules for positive, negative, null, failed, and unavailable outcomes)\n"
     "Every required key must be present with concrete, non-empty values. No other keys."
 )
-
-
-import asyncio
 
 
 class ExperimentSpecGenerator:
@@ -151,25 +141,28 @@ class ExperimentSpecGenerator:
         gap_id: str = "",
         methodology_freeze_id: str = "",
     ) -> ExperimentSpec:
-        # Step 1 & 2: Generate 3 experiment designs & run adversarial analysis concurrently (E6)
-        focuses = [
-            "default: a standard rigorous experiment design",
-            "efficient: a minimal viable experiment that can quickly falsify the hypothesis",
-            "comprehensive: an exhaustive experiment with many ablations and robustness tests",
-        ]
         grounding_block = format_evidence_context(evidence_context)
-        designs = list(await asyncio.gather(*[self._generate_single(candidate, focus, grounding_block) for focus in focuses]))
-
-        adversarials = await asyncio.gather(*[self._adversarial_analysis(candidate, design) for design in designs])
-        for design, adv in zip(designs, adversarials):
-            design["_adversarial"] = adv
-
-        # Step 3: Multi-metric power analysis to determine required seed count (E2)
-        for design in designs:
-            design["_required_seeds"] = self._power_analysis(design)
-
-        # Step 4: Select the best design
-        selected = await self._select_best_design(candidate, designs)
+        selected = await self._generate_single(
+            candidate, "efficient: the smallest controlled experiment that can decisively falsify the hypothesis",
+            grounding_block,
+        )
+        adversarial = await self._adversarial_analysis(candidate, selected)
+        selected["_adversarial"] = adversarial
+        selected["_required_seeds"] = self._power_analysis(selected)
+        # The adversarial review must affect the final plan, not just hidden metadata.
+        if adversarial.get("what_would_disprove"):
+            selected["falsification_condition"] = (
+                f"{selected.get('falsification_condition', '')} "
+                f"Adversarial check: {adversarial['what_would_disprove']}"
+            ).strip()
+        selected["controlled_variables"] = list(dict.fromkeys(
+            [*selected.get("controlled_variables", []), *adversarial.get("confounding_factors", [])]
+        ))
+        selected["interpretation_rules"] = [
+            *selected.get("interpretation_rules", []),
+            *(f"Investigate failure mode before interpreting the effect: {item}"
+              for item in adversarial.get("failure_modes", [])),
+        ]
 
         # Build the final spec
         provider, model = self.router.identity(ModelRole.RESEARCH_REASONING)
@@ -184,7 +177,10 @@ class ExperimentSpecGenerator:
 
         # Compute required_seed_count from power analysis or fall back
         required_seeds = selected.get("_required_seeds", 5)
-        power_target = selected.get("power_target", 0.8)
+        if selected.get("expected_effect_size"):
+            power_note = "Prospective power calculation uses the supplied standardized effect size assumption; verify it using pilot variance."
+        else:
+            power_note = "Power is not established without a standardized effect size or pilot variance; the seed count is a proposed minimum."
 
         # The repository is an execution target: never trust the LLM to invent
         # it (it emits URLs and hallucinated paths). Default to the process CWD
@@ -212,7 +208,7 @@ class ExperimentSpecGenerator:
             random_seeds=tuple(selected.get("random_seeds", [])),
             ablations=tuple(selected.get("ablations", [])),
             robustness_tests=tuple(selected.get("robustness_tests", [])),
-            statistical_plan=selected.get("statistical_plan", ""),
+            statistical_plan=f"{selected.get('statistical_plan', '')} {power_note}".strip(),
             compute_budget=selected.get("compute_budget", ""),
             stopping_conditions=tuple(selected.get("stopping_conditions", [])),
             expected_outputs=tuple(selected.get("expected_outputs", [])),
@@ -227,13 +223,18 @@ class ExperimentSpecGenerator:
             gap_id=gap_id or candidate.gap_id,
             methodology_freeze_id=methodology_freeze_id,
             interpretation_rules=tuple(selected.get("interpretation_rules", []) or ("Interpret outcomes against the pre-specified falsification condition.",)),
+            # Artifact evidence follows the method: the planner may declare the
+            # artifact types this protocol actually produces; the analyzer and
+            # implementation generator honor the subset. Empty keeps the full
+            # universal contract (the analyzer's default).
+            required_artifacts=tuple(str(item) for item in selected.get("required_artifacts", []) or ()),
         )
 
     async def _generate_single(self, candidate: NoveltyCandidate, focus: str, grounding_block: str = "") -> dict:
         """Generate one experiment design with a specific focus."""
         literature_section = f"\n\n{grounding_block}\n" if grounding_block else ""
         messages = [
-            {"role": "system", "content": f"You are a meticulous experimental designer. Focus: {focus}. Translate the proposed novelty candidate into a highly-detailed, reproducible experiment specification. Specify random seeds, ablations, exact stopping conditions, and effect size estimates." + (" " + _BASELINE_CONTRACT if grounding_block else "")},
+            {"role": "system", "content": f"You are a meticulous experimental designer. Focus: {focus}. Produce a concise, reproducible specification with one primary metric, a matched baseline, essential ablations, explicit stopping conditions, and missing prerequisites. Treat effect sizes as prospective assumptions, never measurements; use 0 when no standardized effect is justified. Do not invent dataset checksums, commits, available scripts, or observed metrics." + (" " + _BASELINE_CONTRACT if grounding_block else "")},
             {"role": "user", "content": f"Prompt version: {PROMPT_VERSION}\nCandidate Method: {candidate.method}\nExpected Effect: {candidate.expected_effect}\nAblations: {candidate.required_ablations}\nObjections: {candidate.risks_and_objections}{literature_section}\n\n{_FIELD_CONTRACT}"}
         ]
 
@@ -261,52 +262,13 @@ class ExperimentSpecGenerator:
         return payload
 
     def _power_analysis(self, design: dict) -> int:
-        """Compute required seed count as max across all metrics (E2)."""
-        minimum_effects = design.get("minimum_meaningful_effect", {})
-        power_target = design.get("power_target", 0.8)
-        z_scores = {0.5: 0.0, 0.6: 0.25, 0.7: 0.52, 0.8: 0.84, 0.9: 1.28, 0.95: 1.64, 0.99: 2.33}
-        z_beta = z_scores.get(power_target, 0.84)
-        z_alpha_half = 1.96
-
-        if isinstance(minimum_effects, dict) and minimum_effects:
-            required = []
-            for metric, min_effect in minimum_effects.items():
-                try:
-                    eff = float(min_effect)
-                    if eff > 0:
-                        n = math.ceil(2 * (z_alpha_half + z_beta) ** 2 / (eff ** 2))
-                        required.append(n)
-                except (TypeError, ValueError):
-                    pass
-            if required:
-                return max(3, min(max(required), 30))
-
+        """Raw metric deltas are not standardized effect sizes (delta / sigma)."""
         effect_size = design.get("expected_effect_size")
-        if effect_size is None or not isinstance(effect_size, (int, float)) or effect_size <= 0:
-            effect_size = 0.5
-        n_per_group = math.ceil(2 * (z_alpha_half + z_beta) ** 2 / (effect_size ** 2))
-        return max(3, min(n_per_group, 30))
-
-    async def _select_best_design(self, candidate: NoveltyCandidate, designs: list[dict]) -> dict:
-        """Select the best experiment design via meta-evaluation."""
-        if len(designs) == 1:
-            return designs[0]
-
-        designs_text = "\n\n---\n\n".join(
-            f"Design {i}:\nHypothesis: {d.get('hypothesis', '')[:200]}\n"
-            f"Seeds required: {d.get('_required_seeds', 'N/A')}\n"
-            f"Adversarial falsification: {d.get('_adversarial', {}).get('what_would_disprove', '')[:200]}"
-            for i, d in enumerate(designs)
-        )
-        selection = await self.router.structured_output(
-            ModelRole.RESEARCH_REASONING,
-            messages=[
-                {"role": "system", "content": "Select the best experiment design. Prefer designs that are maximally falsifiable, have appropriate seed counts from power analysis, and have clear adversarial falsification conditions."},
-                {"role": "user", "content": f"Candidate: {candidate.method}\n\n{designs_text}\n\nReturn selected_index and selection_rationale."},
-            ],
-            schema={"name": "design_selection", "schema": SPEC_SELECTION_SCHEMA},
-            project_id=candidate.project_id, run_id=candidate.run_id,
-            operation="experiment_design_selection",
-        )
-        idx = max(0, min(selection.get("selected_index", 0), len(designs) - 1))
-        return designs[idx]
+        proposed = max(3, int(design.get("required_seed_count") or len(design.get("random_seeds", []))))
+        if not isinstance(effect_size, (int, float)) or not math.isfinite(effect_size) or effect_size <= 0:
+            return proposed
+        power = float(design.get("power_target", 0.8))
+        if not 0.5 <= power < 1:
+            raise ValueError("power_target must be between 0.5 and 1 (exclusive).")
+        n_per_group = math.ceil(2 * (NormalDist().inv_cdf(0.975) + NormalDist().inv_cdf(power)) ** 2 / effect_size ** 2)
+        return max(proposed, n_per_group)

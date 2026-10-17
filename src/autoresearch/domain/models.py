@@ -31,6 +31,7 @@ class PipelineKind(StrEnum):
     NOVELTY = "novelty_generation"
     EXPERIMENT = "experiment_design_execution"
     REINVENTION = "result_conditioned_reinvention"
+    MANUSCRIPT = "manuscript_generation"
 
 
 class RunStatus(StrEnum):
@@ -93,6 +94,10 @@ class Project:
     id: str
     title: str
     created_at: str = field(default_factory=utc_now)
+    # Exact database path this project's state lives in (recorded at
+    # creation; lets later commands anchor to the project from any working
+    # directory, even with a custom database path).
+    state_db_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -600,6 +605,7 @@ class ExecutionResult:
     provenance: ArtifactProvenance
     identity: Mapping[str, Any] = field(default_factory=dict)
     artifacts: tuple[Mapping[str, Any], ...] = ()
+    command_json: str = ""
 
 
 @dataclass(frozen=True)
@@ -646,11 +652,99 @@ class ExperimentReport:
     robustness_tests: str
     failed_runs: int
     cost: float
-    limitations: str
+    limitations: tuple[str, ...]
     reproducibility_instructions: str
     decision: ExperimentDecision
     decision_evidence: str
     provenance: ArtifactProvenance
+
+
+@dataclass(frozen=True)
+class ManuscriptRecord:
+    """A versioned manuscript over one exact research lineage.
+
+    ``status`` is ``complete`` only when every lineage prerequisite (review
+    gap, methodology freeze, experiment spec, statistical analysis, report)
+    existed at generation time; otherwise ``incomplete`` and ``gaps_json``
+    lists the precise missing evidence. Paths point at editable artifacts
+    (Markdown, LaTeX, BibTeX, tables, manifest, optional compiled PDF).
+    """
+
+    id: str
+    project_id: str
+    run_id: str
+    title: str
+    status: str
+    decision: str
+    lineage_json: str
+    evidence_bundle_path: str
+    markdown_path: str
+    latex_path: str
+    bibtex_path: str
+    manifest_path: str
+    pdf_path: str | None
+    gaps_json: str
+    provenance: ArtifactProvenance
+    created_at: str = field(default_factory=utc_now)
+
+
+class FindingStatus(StrEnum):
+    """Epistemic status of a research finding.
+
+    The taxonomy keeps DeepScientist-style cumulative memory honest: a claim's
+    status can only rise through the pipeline's deterministic gates, never
+    through narrative confidence. ``confirmed_finding`` here means
+    gate-confirmed (decision gates + recomputed metrics agree), NOT
+    independently replicated.
+    """
+
+    UNVERIFIED_IDEA = "unverified_idea"
+    IMPLEMENTED_METHOD = "implemented_method"
+    MEASURED_OBSERVATION = "measured_observation"
+    INTERPRETATION = "interpretation"
+    CONFIRMED_FINDING = "confirmed_finding"
+    REFUTED_HYPOTHESIS = "refuted_hypothesis"
+    IMPLEMENTATION_FAILURE = "implementation_failure"
+    INCONCLUSIVE = "inconclusive"
+
+
+@dataclass(frozen=True)
+class ResearchFinding:
+    """One structured entry of the shared Findings Memory.
+
+    Adapted (mechanism only) from DeepScientist's cumulative Findings Memory
+    (ICLR 2026, Apache-2.0): every informative outcome — successful, failed,
+    negative, or inconclusive — is persisted with its exact lineage so later
+    stages retrieve failures and contradictions instead of rediscovering them.
+    Observation and interpretation are stored in separate fields and never
+    merged.
+    """
+
+    id: str
+    project_id: str
+    run_id: str
+    status: FindingStatus
+    question_id: str
+    candidate_id: str
+    methodology_freeze_id: str
+    spec_id: str
+    analysis_id: str
+    report_id: str
+    hypothesis: str
+    expected_observation: str
+    implementation_digest: str
+    observed_outcome_json: str
+    interpretation: str
+    uncertainty: str
+    fidelity: str
+    failure_classification: str
+    lesson: str
+    applicability: str
+    open_questions_json: str
+    next_action: str
+    keywords_json: str
+    provenance: ArtifactProvenance
+    created_at: str = field(default_factory=utc_now)
 
 
 class ReinventionAction(StrEnum):

@@ -44,6 +44,7 @@ from autoresearch.domain.models import (
     NoveltyCandidate,
     ResearchGap,
 )
+from autoresearch.providers.credentials import resolve_api_key
 from autoresearch.providers.redaction import redact, redact_text
 
 EXIT_OK = 0
@@ -79,7 +80,7 @@ SKILLS = {
         name="review",
         version="1.0.0",
         description="Evidence-backed deep literature review: discover papers, extract evidence, rank by relevance, and surface a cited research gap. Primary skill — run first.",
-        entry='autoresearch skill review --project <id>  # or: autoresearch skill deep-research --seed-paper <pdf|doi|url>',
+        entry='autoresearch skill review --project <id>  # or: autoresearch skill workflow --seed-paper <pdf|doi|url>',
     ),
     "novelty": SkillMeta(
         name="novelty",
@@ -93,23 +94,17 @@ SKILLS = {
         description="Plan, approve, execute, inspect, and report a falsifiable experiment from a novelty candidate. Run after novelty.",
         entry='autoresearch skill experiment plan --candidate-id <id>',
     ),
-    "reinvention": SkillMeta(
-        name="reinvention",
-        version="1.0.0",
-        description="Result-conditioned research iteration: perform root-cause analysis on experiment results and synthesize Cycle N+1 hypothesis and candidate. Run after experiment.",
-        entry='autoresearch skill reinvention --candidate-id <id>',
-    ),
-    "deep-research": SkillMeta(
-        name="deep-research",
-        version="1.0.0",
-        description="Legacy combined skill: discover + review + gap in one shot. Prefer the 'review' skill for new workflows.",
-        entry='autoresearch skill deep-research --seed-paper <pdf|doi|url>',
-    ),
     "workflow": SkillMeta(
         name="workflow",
         version="1.0.0",
-        description="One durable cycle: seed → review → question → hypotheses → versioned methodology → design → approved execution. Reuses completed stages; stops where asked.",
-        entry='autoresearch skill workflow --seed-paper <pdf|doi|url> --until design  # resume: autoresearch skill workflow --project <id> --until experiment',
+        description="One durable cycle: seed → review → question → hypotheses → versioned methodology → design → approved execution → manuscript. Reuses completed stages; stops where asked.",
+        entry='autoresearch skill workflow --seed-paper <pdf|doi|url> --until design  # resume: autoresearch skill workflow --project <id> --until manuscript',
+    ),
+    "manuscript": SkillMeta(
+        name="manuscript",
+        version="1.0.0",
+        description="Stage-4 manuscript: deterministic, evidence-grounded draft (Markdown + LaTeX + BibTeX + tables + manifest) over the exact review→novelty→experiment lineage. Reports evidence gaps honestly; never fabricates results.",
+        entry='autoresearch skill manuscript --project <id>  # or: autoresearch skill workflow --project <id> --until manuscript',
     ),
 }
 
@@ -133,19 +128,22 @@ def _canonical_root() -> Path:
 
 
 def _target_roots(target: str) -> list[Path]:
-    """Installation targets: Claude Code and OpenCode skill discovery dirs."""
+    """Installation targets: Codex, Claude Code, and OpenCode skill dirs."""
     if target == "claude":
         configured = os.environ.get("CLAUDE_SKILLS_DIR", "").strip()
         return [Path(configured).expanduser() if configured else Path.home() / ".claude" / "skills"]
     if target == "opencode":
         configured = os.environ.get("OPENCODE_SKILLS_DIR", "").strip()
         return [Path(configured).expanduser() if configured else Path.home() / ".config" / "opencode" / "skills"]
+    if target == "codex":
+        configured = os.environ.get("CODEX_SKILLS_DIR", "").strip()
+        return [Path(configured).expanduser() if configured else Path.home() / ".codex" / "skills"]
     if target == "all":
         roots: list[Path] = []
-        for sub in ("claude", "opencode"):
+        for sub in ("codex", "claude", "opencode"):
             roots.extend(_target_roots(sub))
         return list(dict.fromkeys(roots))
-    raise ValueError(f"unknown skill target '{target}'; use claude, opencode, or all")
+    raise ValueError(f"unknown skill target '{target}'; use codex, claude, opencode, or all")
 
 
 def _user_skills_dir() -> Path:
@@ -236,7 +234,7 @@ def skill_list() -> None:
         meta = SKILLS[name]
         canonical_present = (_canonical_dir(name) / "SKILL.md").is_file()
         targets = {}
-        for target in ("claude", "opencode"):
+        for target in ("codex", "claude", "opencode"):
             root = _target_roots(target)[0]
             provenance = _installed_provenance(name, root)
             targets[target] = {
@@ -267,7 +265,7 @@ def _selected_or_all(names: list[str]) -> list[str]:
 @skill_app.command("install")
 def skill_install(
     names: list[str] = typer.Argument(None, help="Skills to install (default: all)."),
-    target: str = typer.Option("claude", "--target", help="Install target: claude, opencode, or all."),
+    target: str = typer.Option("all", "--target", help="Install target: codex, claude, opencode, or all (default: all)."),
     force: bool = typer.Option(False, "--force", help="Overwrite a colliding skill we did not install."),
 ) -> None:
     """Install canonical skills into the Claude Code and/or OpenCode skill directories."""
@@ -290,7 +288,7 @@ def skill_install(
 @skill_app.command("update")
 def skill_update(
     names: list[str] = typer.Argument(None, help="Skills to refresh (default: all)."),
-    target: str = typer.Option("claude", "--target", help="Update target: claude, opencode, or all."),
+    target: str = typer.Option("all", "--target", help="Update target: codex, claude, opencode, or all (default: all)."),
 ) -> None:
     """Re-sync installed skills from the canonical package copies."""
     roots = _target_roots(target)
@@ -312,7 +310,7 @@ def skill_update(
 @skill_app.command("uninstall")
 def skill_uninstall(
     names: list[str] = typer.Argument(None, help="Skills to remove (default: all installed by this tool)."),
-    target: str = typer.Option("claude", "--target", help="Removal target: claude, opencode, or all."),
+    target: str = typer.Option("all", "--target", help="Removal target: codex, claude, opencode, or all (default: all)."),
 ) -> None:
     """Remove only skill directories this tool installed (provenance-marked)."""
     import shutil
@@ -343,7 +341,7 @@ def skill_doctor() -> None:
             "detail": "SKILL.md present" if present else "missing canonical SKILL.md",
         })
     for name in sorted(SKILLS):
-        for target in ("claude", "opencode"):
+        for target in ("codex", "claude", "opencode"):
             root = _target_roots(target)[0]
             provenance = _installed_provenance(name, root)
             if not provenance:
@@ -354,17 +352,11 @@ def skill_doctor() -> None:
                 checks.append({"check": f"installed/{target}/{name}", "ok": True, "detail": "synced with canonical"})
     repo_skills = Path.cwd() / ".claude" / "skills"
     if repo_skills.is_dir():
-        # Only OUR skill names matter, and only when they actually diverge
-        # from the canonical copies (an in-sync copy is fine wherever it
-        # lives; foreign skills are none of this tool's business).
-        for entry in sorted(path.name for path in repo_skills.iterdir() if path.is_dir() and path.name in SKILLS):
-            provenance = _installed_provenance(entry, repo_skills)
-            if provenance and provenance.get("source_checksum") == _source_checksum(entry):
-                continue
+        for entry in sorted(path.name for path in repo_skills.iterdir() if path.is_dir()):
             checks.append({
                 "check": f"repo-copy/{entry}",
                 "ok": False,
-                "detail": "divergent copy under .claude/skills; canonicalize with `autoresearch skill update`",
+                "detail": "divergent copy under .claude/skills; canonicalize with `autoresearch skill install`",
             })
 
     required_roles = ("literature_extraction", "research_reasoning", "scientific_critic")
@@ -375,7 +367,16 @@ def skill_doctor() -> None:
             missing_roles = [role for role in required_roles if role not in container.router.assignments]
             if missing_roles:
                 return {"check": "providers", "ok": False, "detail": f"no model assigned to roles: {', '.join(missing_roles)}"}
-            return {"check": "providers", "ok": True, "detail": "all research roles assigned"}
+            unavailable = []
+            for name in sorted({container.router.assignments[role].provider for role in required_roles}):
+                provider = container.router.registry.get(name)
+                try:
+                    resolve_api_key(provider.config)
+                except Exception:
+                    unavailable.append(name)
+            if unavailable:
+                return {"check": "providers", "ok": False, "detail": "credentials unavailable for: " + ", ".join(unavailable)}
+            return {"check": "providers", "ok": True, "detail": "all research roles assigned; credentials resolved locally (live authentication not checked)"}
         finally:
             await container.close()
 
@@ -432,16 +433,39 @@ def _fail(code: str, exc: Exception, exit_code: int) -> None:
     raise typer.Exit(exit_code)
 
 
-def _invoke(operation: Callable[[ApplicationContainer], Awaitable[Any]], *, operation_name: str) -> None:
+def _settings_for(project_id: str | None = None, *, candidate_id: str | None = None) -> Any:
+    """Settings anchored to the project's recorded data root, so --project
+    resume works from any working directory and projects never bleed into
+    each other's state (or into the source checkout)."""
+    from autoresearch.application.config import load_settings, resolve_settings
+
+    settings = load_settings()
+    if not project_id and candidate_id:
+        from autoresearch.storage.repository import ResearchRepository
+
+        probe = ResearchRepository(settings.database_path, settings.artifact_root)
+        row = probe.row("SELECT project_id FROM novelty_candidates WHERE id=?", (candidate_id,))
+        if row:
+            project_id = str(row["project_id"])
+    return resolve_settings(project_id)
+
+
+def _invoke(operation: Callable[[ApplicationContainer], Awaitable[Any]], *, operation_name: str, project_id: str | None = None, candidate_id: str | None = None) -> None:
+    from autoresearch.application.progress import reset_sink, set_sink, stderr_sink
+
     async def execute() -> Any:
-        container = ApplicationContainer(load_settings())
+        container = ApplicationContainer(_settings_for(project_id, candidate_id=candidate_id))
+        token = set_sink(stderr_sink)  # live progress → stderr JSON lines
         try:
             return await operation(container)
         finally:
+            reset_sink(token)
             await container.close()
 
     try:
         result = asyncio.run(execute())
+    except TimeoutError as exc:
+        _fail("runtime_limit", exc, EXIT_ERROR)
     except PermissionError as exc:
         _fail("approval_required", exc, EXIT_APPROVAL_REQUIRED)
     except (ValueError, RuntimeError) as exc:
@@ -515,134 +539,40 @@ def _manifest_summary(manifest: EnvironmentManifest | None) -> dict[str, Any] | 
         "dependency_lock_checksum": manifest.dependency_lock_checksum,
         "dataset_paths": list(manifest.dataset_paths),
     }
-
-
-@skill_app.command("status")
-def skill_status(
-    project: str | None = typer.Option(None, "--project", help="Project ID to summarize."),
-) -> None:
-    """Summarize the durable research state for a project (or all projects)."""
-
-    async def operation(c: ApplicationContainer) -> dict[str, Any]:
-        if project:
-            return {"projects": [_project_status(c, project)]}
-        rows = c.repository.rows("SELECT id,title,created_at FROM projects ORDER BY created_at DESC")
-        return {"projects": [_project_status(c, str(row["id"])) for row in rows[:20]]}
-
-    _invoke(operation, operation_name="skill/status")
-
-
-def _project_status(c: ApplicationContainer, project_id: str) -> dict[str, Any]:
-    project = c.repository.get_project(project_id)
-    if not project:
-        raise ValueError(f"project_not_found: project '{project_id}' not found")
-    papers = c.repository.list_papers(project_id)
-    latest_gap = c.repository.row(
-        "SELECT id,statement,classification FROM research_gaps WHERE project_id=? ORDER BY confidence DESC LIMIT 1",
-        (project_id,),
-    )
-    latest_portfolio = c.repository.row(
-        "SELECT id,low_risk_candidate_id,balanced_candidate_id,high_risk_candidate_id FROM novelty_portfolios WHERE project_id=? ORDER BY rowid DESC LIMIT 1",
-        (project_id,),
-    )
-    latest_spec = c.repository.row(
-        "SELECT id,candidate_id,hypothesis FROM experiment_specs WHERE project_id=? ORDER BY rowid DESC LIMIT 1",
-        (project_id,),
-    )
-    runs = c.repository.rows(
-        "SELECT id,kind,status FROM pipeline_runs WHERE project_id=? ORDER BY started_at DESC",
-        (project_id,),
-    )
-    return {
-        "project_id": project.id,
-        "title": project.title,
-        "paper_count": len(papers),
-        "runs": [{"id": row["id"], "kind": row["kind"], "status": row["status"]} for row in runs],
-        "latest_gap": _db_gap_summary(latest_gap) if latest_gap else None,
-        "latest_novelty_portfolio": dict(latest_portfolio) if latest_portfolio else None,
-        "latest_experiment_spec": dict(latest_spec) if latest_spec else None,
-    }
-
-
-def _db_gap_summary(row: dict[str, Any]) -> dict[str, Any]:
-    return {"id": row["id"], "statement": row["statement"], "classification": row["classification"]}
-
-
-@skill_app.command("deep-research")
-def deep_research(
-    seed_paper: str = typer.Option("", "--seed-paper", help="Seed PDF path, DOI, or HTTPS URL."),
-    from_catalog: Path | None = typer.Option(None, "--from-catalog", help="Local JSON paper catalog."),
-    project: str | None = typer.Option(None, "--project", help="Existing project ID; review its corpus."),
-    limit: int = typer.Option(20, "--limit", min=1, max=100),
-    since_year: int = typer.Option(datetime.now(timezone.utc).year - 3, "--since-year", min=1900),
-    top_k: int = typer.Option(5, "--top-k", min=1, max=15),
-    hierarchical: bool = typer.Option(False, "--hierarchical/--flat", help="Chunk-level hierarchical review for long PDFs."),
-) -> None:
-    """Discover related papers, run a deep review, and surface one cited gap."""
-
-    async def operation(c: ApplicationContainer) -> dict[str, Any]:
-        project_id: str | None = project
-        if project_id:
-            existing = c.repository.get_project(project_id)
-            if not existing:
-                raise ValueError(f"project_not_found: project '{project_id}' not found")
-            discovery_summary: dict[str, Any] = {"project_id": project_id, "used_existing": True}
-        elif from_catalog:
-            outcome = await c.discovery.import_catalog(from_catalog)
-            project_id = outcome.project_id
-            discovery_summary = _discovery_summary(outcome)
-        elif seed_paper:
-            outcome = await c.discovery.discover(seed_paper, limit=limit, since_year=since_year)
-            project_id = outcome.project_id
-            discovery_summary = _discovery_summary(outcome)
-        else:
-            raise ValueError("usage: provide --seed-paper, --from-catalog, or --project")
-        assert project_id is not None
-        review = await c.review.review(project_id, top_k=top_k, hierarchical=hierarchical)
-        return {
-            "project_id": review.project_id,
-            "discovery": discovery_summary,
-            "review_run_id": review.run_id,
-            "reviewed": review.reviewed,
-            "failed_reviews": review.failed,
-            "top_paper_ids": list(review.top_paper_ids),
-            "gap": _gap_summary(review.gap),
-            "json_report": review.json_report,
-            "markdown_report": review.markdown_report,
-        }
-
-    _invoke(operation, operation_name="deep-research")
-
-
 @skill_app.command("review")
 def review(
     project: str = typer.Option(..., "--project", help="Project ID returned by discover."),
     top_k: int = typer.Option(5, "--top-k", min=1, max=15),
     hierarchical: bool = typer.Option(False, "--hierarchical/--flat", help="Chunk-level hierarchical review for long PDFs."),
     fresh: bool = typer.Option(False, "--fresh", help="Re-extract every paper review even when a verified one is reusable."),
+    max_runtime_seconds: float | None = typer.Option(None, "--max-runtime-seconds", min=1, help="Optional total review deadline; unlimited when omitted."),
 ) -> None:
     """Run the deep review over an existing project corpus (reuses verified reviews by default)."""
 
     async def operation(c: ApplicationContainer) -> dict[str, Any]:
-        outcome = await c.review.review(project, top_k=top_k, hierarchical=hierarchical, fresh=fresh)
+        outcome = await c.review.review(project, top_k=top_k, hierarchical=hierarchical, fresh=fresh, max_runtime_seconds=max_runtime_seconds)
+        from autoresearch.review.matrix import project_keywords
         return {
             "project_id": outcome.project_id,
             "review_run_id": outcome.run_id,
             "reviewed": outcome.reviewed,
+            "reused_reviews": outcome.reused,
             "failed_reviews": outcome.failed,
             "top_paper_ids": list(outcome.top_paper_ids),
+            "keywords": project_keywords(c.repository, project_id=project, run_id=outcome.run_id),
             "gap": _gap_summary(outcome.gap),
             "json_report": outcome.json_report,
             "markdown_report": outcome.markdown_report,
         }
 
-    _invoke(operation, operation_name="review")
+    _invoke(operation, operation_name="review", project_id=project)
 
 
 @skill_app.command("novelty")
 def novelty(
     project: str = typer.Option(..., "--project", help="Project ID with a validated research gap."),
     gap_id: str | None = typer.Option(None, "--gap-id", help="Specific gap; default is the highest-confidence gap."),
+    max_runtime_seconds: float | None = typer.Option(None, "--max-runtime-seconds", min=1, help="Optional total novelty deadline; unlimited when omitted."),
 ) -> None:
     """Generate, prior-art-check, and adversarially critique novelty candidates."""
 
@@ -650,25 +580,45 @@ def novelty(
         existing = c.repository.get_project(project)
         if not existing:
             raise ValueError(f"project_not_found: project '{project}' not found")
-        portfolio_id = await c.novelty.generate_portfolio(project, gap_id=gap_id)
-        portfolio = c.repository.row("SELECT * FROM novelty_portfolios WHERE id=?", (portfolio_id,))
+        portfolio_id = await c.novelty.generate_portfolio(project, gap_id=gap_id, max_runtime_seconds=max_runtime_seconds)
+        portfolio = c.repository.get_novelty_portfolio_by_id(portfolio_id)
         if not portfolio:
             raise ValueError(f"portfolio_not_found: novelty portfolio '{portfolio_id}' not found")
         candidate_ids = tuple(
-            value for value in (portfolio["low_risk_candidate_id"], portfolio["balanced_candidate_id"], portfolio["high_risk_candidate_id"])
+            value for value in (portfolio.low_risk_candidate_id, portfolio.balanced_candidate_id, portfolio.high_risk_candidate_id)
             if value
         )
+        candidates = []
+        resolved_gap_id = gap_id
+        for candidate_id in candidate_ids:
+            candidate = c.repository.get_novelty_candidate(candidate_id)
+            if candidate is None:
+                continue
+            resolved_gap_id = resolved_gap_id or candidate.gap_id
+            assessment = c.repository.get_prior_art_assessment(candidate_id)
+            critique = c.repository.get_novelty_critique(candidate_id)
+            candidates.append({
+                "candidate_id": candidate_id, "method": candidate.method,
+                "difference_from_existing": candidate.difference_from_existing,
+                "falsification_condition": candidate.falsification_condition,
+                "minimum_validating_experiment": candidate.minimum_validating_experiment,
+                "overlap_status": assessment.overlap_status.value if assessment else "unassessed",
+                "unresolved_overlap": assessment.unresolved_overlap if assessment else "",
+                "objections": list(critique.objections) if critique else [],
+                "failure_scenarios": list(critique.failure_scenarios) if critique else [],
+            })
         return {
             "project_id": project,
             "portfolio_id": portfolio_id,
-            "gap_id": gap_id,
+            "gap_id": resolved_gap_id,
             "candidate_ids": list(candidate_ids),
-            "low_risk_candidate_id": portfolio["low_risk_candidate_id"],
-            "balanced_candidate_id": portfolio["balanced_candidate_id"],
-            "high_risk_candidate_id": portfolio["high_risk_candidate_id"],
+            "candidates": candidates,
+            "low_risk_candidate_id": portfolio.low_risk_candidate_id,
+            "balanced_candidate_id": portfolio.balanced_candidate_id,
+            "high_risk_candidate_id": portfolio.high_risk_candidate_id,
         }
 
-    _invoke(operation, operation_name="novelty")
+    _invoke(operation, operation_name="novelty", project_id=project)
 
 
 @skill_app.command("workflow")
@@ -676,12 +626,11 @@ def workflow(
     seed_paper: str = typer.Option("", "--seed-paper", help="Seed PDF path, DOI, or HTTPS URL for a new project."),
     from_catalog: Path | None = typer.Option(None, "--from-catalog", help="Local JSON paper catalog for a new project."),
     project: str = typer.Option("", "--project", help="Existing project ID to resume/extend."),
-    until: str = typer.Option("design", "--until", help="Stop after: review, question, hypotheses, methodology, design, or experiment."),
+    until: str = typer.Option("design", "--until", help="Stop after: review, question, hypotheses, methodology, design, experiment, or manuscript."),
     limit: int = typer.Option(20, "--limit", min=1, max=100),
     top_k: int = typer.Option(5, "--top-k", min=1, max=15),
     max_cost_usd: float | None = typer.Option(None, "--max-cost-usd", min=0.0, help="Cumulative project provider-cost hard stop (applies to this and later invocations)."),
     max_tokens: int | None = typer.Option(None, "--max-tokens", min=1, help="Project total-token ceiling (prompt+completion) across all provider calls."),
-    max_revisions: int = typer.Option(0, "--max-revisions", min=0, max=5, help="Bounded adaptive revision cycles after an analyzed experiment (0 = off; experimental)."),
 ) -> None:
     """Advance one project through the full durable research cycle, reusing completed stages."""
 
@@ -699,29 +648,11 @@ def workflow(
         result = await c.workflow.run(
             seed=seed, project_id=project_id, until=until,
             limit=limit, top_k=top_k, max_cost_usd=max_cost_usd,
-            max_total_tokens=max_tokens, max_revisions=max_revisions,
+            max_total_tokens=max_tokens,
         )
         return result
 
-    _invoke(operation, operation_name="workflow")
-
-
-@skill_app.command("reinvention")
-def reinvention(
-    candidate_id: str = typer.Option(..., "--candidate-id", help="Novelty candidate ID of completed experiment to reinvent from."),
-) -> None:
-    """Analyze experiment report, perform root-cause analysis, and generate Cycle N+1 candidate."""
-
-    async def operation(c: ApplicationContainer) -> dict[str, Any]:
-        return await c.reinvention.reinvent(candidate_id)
-
-    _invoke(operation, operation_name="reinvention")
-
-
-# --------------------------------------------------------------------------
-# Experiment lifecycle sub-command
-# --------------------------------------------------------------------------
-
+    _invoke(operation, operation_name="workflow", project_id=project)
 experiment_app = typer.Typer(
     name="experiment",
     help="Falsifiable experiment lifecycle from a novelty candidate. Planning never executes code.",
@@ -739,12 +670,13 @@ def _require_candidate(c: ApplicationContainer, candidate_id: str) -> NoveltyCan
 @experiment_app.command("plan")
 def experiment_plan(
     candidate_id: str = typer.Option(..., "--candidate-id", help="Novelty candidate to translate into a spec."),
+    max_runtime_seconds: float | None = typer.Option(None, "--max-runtime-seconds", min=1, help="Optional total planning deadline; unlimited when omitted."),
 ) -> None:
     """Translate a novelty candidate into an approval-gated ExperimentSpec (no code runs)."""
 
     async def operation(c: ApplicationContainer) -> dict[str, Any]:
         _require_candidate(c, candidate_id)
-        spec_id = await c.experiment.execute_candidate(candidate_id, mode="plan")
+        spec_id = await c.experiment.execute_candidate(candidate_id, mode="plan", max_runtime_seconds=max_runtime_seconds)
         spec = c.repository.get_experiment_spec_by_id(spec_id)
         preview = c.experiment.approval_preview_for_candidate(candidate_id)
         return {
@@ -763,7 +695,7 @@ def experiment_plan(
             "spec": _spec_summary(spec),
         }
 
-    _invoke(operation, operation_name="experiment/plan")
+    _invoke(operation, operation_name="experiment/plan", candidate_id=candidate_id)
 
 
 @experiment_app.command("validate")
@@ -786,7 +718,20 @@ def experiment_validate(
             "environment": _manifest_summary(manifest),
         }
 
-    _invoke(operation, operation_name="experiment/validate")
+    _invoke(operation, operation_name="experiment/validate", candidate_id=candidate_id)
+
+
+@experiment_app.command("implement")
+def experiment_implement(
+    candidate_id: str = typer.Option(..., "--candidate-id", help="Novelty candidate whose planned spec needs a working implementation."),
+) -> None:
+    """Generate and statically verify the experiment implementation (no execution)."""
+
+    async def operation(c: ApplicationContainer) -> dict[str, Any]:
+        _require_candidate(c, candidate_id)
+        return await c.experiment.implement_candidate(candidate_id)
+
+    _invoke(operation, operation_name="experiment/implement", candidate_id=candidate_id)
 
 
 @experiment_app.command("approve")
@@ -827,7 +772,7 @@ def experiment_approve(
             "preview": _approval_preview(preview),
         }
 
-    _invoke(operation, operation_name="experiment/approve")
+    _invoke(operation, operation_name="experiment/approve", candidate_id=candidate_id)
 
 
 def _approval_preview(preview: dict[str, Any]) -> dict[str, Any]:
@@ -871,7 +816,7 @@ def experiment_execute(
             "jobs": jobs,
         }
 
-    _invoke(operation, operation_name="experiment/execute")
+    _invoke(operation, operation_name="experiment/execute", candidate_id=candidate_id)
 
 
 @experiment_app.command("inspect")
@@ -894,39 +839,32 @@ def experiment_inspect(
             "environment": _manifest_summary(manifest),
         }
 
-    _invoke(operation, operation_name="experiment/inspect")
+    _invoke(operation, operation_name="experiment/inspect", candidate_id=candidate_id)
 
 
 @experiment_app.command("report")
 def experiment_report(
     candidate_id: str = typer.Option(..., "--candidate-id", help="Novelty candidate whose executed experiment to report."),
 ) -> None:
-    """Write the scientific report for a completed, analyzed experiment."""
+    """Write (or reuse) the deterministic report for an analyzed experiment."""
 
     async def operation(c: ApplicationContainer) -> dict[str, Any]:
         _require_candidate(c, candidate_id)
-        spec = c.repository.get_experiment_spec(candidate_id)
-        if not spec:
-            raise ValueError("insufficient_evidence: no experiment spec exists for this candidate")
-        analysis = c.repository.get_statistical_analysis(spec.id)
-        if not analysis:
-            raise ValueError(
-                "insufficient_evidence: no completed statistical analysis exists for this candidate; "
-                "artifact ingestion and analysis are not yet wired into the CLI, so an executed "
-                "experiment is reported as executed_analysis_pending until they are"
-            )
-        report: ExperimentReport = await c.experiment.pipeline.report_writer.write(spec, analysis)
-        c.repository.save_experiment_report(report)
-        return {
-            "report_id": report.id,
-            "analysis_id": analysis.id,
-            "spec_id": spec.id,
-            "candidate_id": candidate_id,
-            "decision": report.decision.value,
-            "decision_evidence": report.decision_evidence,
-        }
+        return await c.experiment.report_for_candidate(candidate_id)
 
-    _invoke(operation, operation_name="experiment/report")
+    _invoke(operation, operation_name="experiment/report", candidate_id=candidate_id)
+
+
+@skill_app.command("manuscript")
+def skill_manuscript(
+    project: str = typer.Option(..., "--project", help="Project ID whose validated lineage to write the manuscript from."),
+) -> None:
+    """Generate the stage-4 manuscript from the exact review→novelty→experiment lineage."""
+
+    async def operation(c: ApplicationContainer) -> dict[str, Any]:
+        return await c.manuscript.generate(project)
+
+    _invoke(operation, operation_name="skill/manuscript", project_id=project)
 
 
 @experiment_app.command("cancel")
@@ -942,7 +880,7 @@ def experiment_cancel(
         c.repository.cancel_run(run_id)
         return {"run_id": run_id, "status": "cancelled"}
 
-    _invoke(operation, operation_name="experiment/cancel")
+    _invoke(operation, operation_name="experiment/cancel", candidate_id=candidate_id)
 
 
 skill_app.add_typer(experiment_app)

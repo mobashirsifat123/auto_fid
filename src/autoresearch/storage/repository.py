@@ -8,7 +8,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
 from autoresearch.domain.models import (
@@ -17,7 +17,10 @@ from autoresearch.domain.models import (
     DownloadRecord,
     DownloadStatus,
     EvidenceClaim,
+    FindingStatus,
     GapClassification,
+    ManuscriptRecord,
+    ResearchFinding,
     PaperRecord,
     PaperReview,
     PipelineKind,
@@ -51,7 +54,38 @@ from autoresearch.domain.models import (
 )
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 16
+
+
+def _register_project_root(project_id: str, data_root: str) -> None:
+    """Machine-local registry: project id -> the directory its state lives
+    in. Lets any later command anchor to the project from an arbitrary
+    working directory (resume never starts a fresh database by accident)."""
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    registry_path = _Path(_os.environ.get(
+        "AUTORESEARCH_REGISTRY_PATH", str(_Path.home() / ".autoresearch" / "project-registry.json"),
+    )).expanduser()
+    try:
+        payload: dict = {}
+        if registry_path.is_file():
+            try:
+                payload = _json.loads(registry_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    payload = {}
+            except _json.JSONDecodeError:
+                payload = {}
+        payload[str(project_id)] = str(data_root)
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = registry_path.with_suffix(".tmp")
+        temporary.write_text(_json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(registry_path)
+    except OSError:
+        # Registry writes are best-effort bookkeeping; the project row itself
+        # still carries data_root for same-database lookups.
+        pass
 
 
 class ResearchRepository:
@@ -115,6 +149,21 @@ class ResearchRepository:
             if current < 11:
                 connection.executescript(_SCHEMA_V11)
                 connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (11, utc_now()))
+            if current < 12:
+                connection.executescript(_SCHEMA_V12)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (12, utc_now()))
+            if current < 13:
+                connection.executescript(_SCHEMA_V13)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (13, utc_now()))
+            if current < 14:
+                connection.executescript(_SCHEMA_V14)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (14, utc_now()))
+            if current < 15:
+                connection.executescript(_SCHEMA_V15)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (15, utc_now()))
+            if current < 16:
+                connection.executescript(_SCHEMA_V16)
+                connection.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)", (16, utc_now()))
             latest = int(connection.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0])
             if latest != SCHEMA_VERSION:
                 raise RuntimeError(f"Unsupported database schema v{latest}; expected v{SCHEMA_VERSION}.")
@@ -123,7 +172,12 @@ class ResearchRepository:
         project = Project(uuid4().hex, title.strip())
         if not project.title:
             raise ValueError("Project title is required.")
-        self.execute("INSERT INTO projects(id,title,created_at) VALUES(?,?,?)", (project.id, project.title, project.created_at))
+        # The project remembers where its state lives: later commands can
+        # anchor to this directory from any CWD instead of creating a fresh
+        # database wherever they happen to run.
+        state_db_path = str(self.path.resolve())
+        self.execute("INSERT INTO projects(id,title,created_at,state_db_path) VALUES(?,?,?,?)", (project.id, project.title, project.created_at, state_db_path))
+        _register_project_root(project.id, state_db_path)
         return project
 
     def get_project(self, project_id: str) -> Project | None:
@@ -368,7 +422,7 @@ class ResearchRepository:
         return [_review(row) for row in self.rows(sql + " ORDER BY paper_id", params)]
 
     def latest_reusable_review(self, paper: "PaperRecord", *, hierarchical: bool) -> PaperReview | None:
-        """Latest review of this paper from any COMPLETED run of the same
+        """Latest completed paper checkpoint from any run of the same
         project whose prompt version matches the requested review mode.
         Reviews are verbatim-verified evidence for an immutable paper under a
         fixed prompt version, so reuse is sound; a version bump or --fresh
@@ -376,8 +430,9 @@ class ResearchRepository:
         version_prefix = "paper-review-hierarchical-v1" if hierarchical else "paper-review-v2"
         row = self.row(
             "SELECT pr.* FROM paper_reviews pr"
-            " JOIN pipeline_runs r ON r.id = pr.run_id"
-            " WHERE pr.project_id = ? AND pr.paper_id = ? AND r.status = 'completed'"
+            " JOIN pipeline_checkpoints cp ON cp.run_id=pr.run_id"
+            " AND cp.stage='paper_review' AND cp.item_key=pr.paper_id AND cp.status='completed'"
+            " WHERE pr.project_id = ? AND pr.paper_id = ?"
             "   AND pr.provenance_json LIKE ?"
             " ORDER BY pr.rowid DESC LIMIT 1",
             (paper.project_id, paper.id, f'%"prompt_version": "{version_prefix}%'),
@@ -583,13 +638,41 @@ class ResearchRepository:
                 (portfolio.id, portfolio.project_id, portfolio.run_id, portfolio.low_risk_candidate_id, portfolio.balanced_candidate_id, portfolio.high_risk_candidate_id, _json(portfolio.selection_reasons), _json_provenance(portfolio.provenance))
             )
 
+    def _portfolio_from_record(self, record: dict[str, Any]) -> NoveltyPortfolio:
+        members = {row["tier"]: row["candidate_id"] for row in self.rows("SELECT tier,candidate_id FROM novelty_portfolio_members WHERE portfolio_id=?", (record["id"],))}
+        return NoveltyPortfolio(record["id"], record["project_id"], record["run_id"], members.get("low_risk"), members.get("balanced"), members.get("high_risk"), _loads(record["selection_reasons_json"], {}), _provenance(record["provenance_json"]))
+
     def get_novelty_portfolio(self, run_id: str) -> NoveltyPortfolio | None:
         record = self.row("SELECT * FROM novelty_portfolio_records WHERE run_id=?", (run_id,))
         if record:
-            members = {row["tier"]: row["candidate_id"] for row in self.rows("SELECT tier,candidate_id FROM novelty_portfolio_members WHERE portfolio_id=?", (record["id"],))}
-            return NoveltyPortfolio(record["id"], record["project_id"], record["run_id"], members.get("low_risk"), members.get("balanced"), members.get("high_risk"), _loads(record["selection_reasons_json"], {}), _provenance(record["provenance_json"]))
+            return self._portfolio_from_record(record)
         row = self.row("SELECT * FROM novelty_portfolios WHERE run_id=?", (run_id,))
         return _novelty_portfolio(row) if row else None
+
+    def get_novelty_portfolio_by_id(self, portfolio_id: str) -> NoveltyPortfolio | None:
+        record = self.row("SELECT * FROM novelty_portfolio_records WHERE id=?", (portfolio_id,))
+        if record:
+            return self._portfolio_from_record(record)
+        row = self.row("SELECT * FROM novelty_portfolios WHERE id=?", (portfolio_id,))
+        return _novelty_portfolio(row) if row else None
+
+    def novelty_portfolios_for_project(self, project_id: str) -> list[NoveltyPortfolio]:
+        # Newest first. The record schema is authoritative; legacy rows are
+        # appended for back-compat. Three-tier portfolios are written to BOTH
+        # tables, so dedupe by id before returning.
+        seen: set[str] = set()
+        portfolios: list[NoveltyPortfolio] = []
+        for record in self.rows("SELECT * FROM novelty_portfolio_records WHERE project_id=? ORDER BY rowid DESC", (project_id,)):
+            portfolios.append(self._portfolio_from_record(record))
+            seen.add(str(record["id"]))
+        for row in self.rows("SELECT * FROM novelty_portfolios WHERE project_id=? ORDER BY rowid DESC", (project_id,)):
+            if str(row["id"]) not in seen:
+                portfolios.append(_novelty_portfolio(row))
+        return portfolios
+
+    def latest_novelty_portfolio(self, project_id: str) -> NoveltyPortfolio | None:
+        portfolios = self.novelty_portfolios_for_project(project_id)
+        return portfolios[0] if portfolios else None
 
     def save_novelty_claim_ledger(self, ledger: NoveltyClaimLedger) -> None:
         self.execute(
@@ -650,18 +733,32 @@ class ResearchRepository:
 
     def save_execution_result(self, result: ExecutionResult) -> None:
         self.execute(
-            "INSERT INTO execution_results(id,project_id,run_id,job_id,exit_code,stdout,stderr,structured_metrics_json,gpu_telemetry_json,checkpoint_manifest_json,failure_classification,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (result.id, result.project_id, result.run_id, result.job_id, result.exit_code, result.stdout, result.stderr, _json(result.structured_metrics), _json(result.gpu_telemetry), _json(result.checkpoint_manifest), result.failure_classification, _json_provenance(result.provenance))
+            "INSERT INTO execution_results(id,project_id,run_id,job_id,exit_code,stdout,stderr,structured_metrics_json,gpu_telemetry_json,checkpoint_manifest_json,failure_classification,command_json,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (result.id, result.project_id, result.run_id, result.job_id, result.exit_code, result.stdout, result.stderr, _json(result.structured_metrics), _json(result.gpu_telemetry), _json(result.checkpoint_manifest), result.failure_classification, result.command_json, _json_provenance(result.provenance))
         )
 
     def get_execution_result(self, job_id: str) -> ExecutionResult | None:
         row = self.row("SELECT * FROM execution_results WHERE job_id=?", (job_id,))
         return _execution_result(row) if row else None
 
+    def execution_commands_for_spec(self, spec_id: str) -> list[str]:
+        """Exact executed commands for a spec, from the executor's recorded
+        argv. Empty when nothing was executed (e.g. legacy rows); callers must
+        report absence honestly, never substitute a reconstructed command."""
+        commands: list[str] = []
+        for job in self.execution_jobs(spec_id):
+            result = self.get_execution_result(job.id)
+            if result is None:
+                continue
+            argv = _loads(result.command_json, None)
+            if isinstance(argv, list) and argv:
+                commands.append(" ".join(str(part) for part in argv))
+        return commands
+
     def save_statistical_analysis(self, analysis: StatisticalAnalysis) -> None:
         self.execute(
-            "INSERT INTO statistical_analyses(id,project_id,run_id,spec_id,baseline_metrics_json,proposed_metrics_json,effect_size_json,confidence_intervals_json,seed_level_results_json,ablation_contributions_json,parameter_count_diff,flops_latency_diff,training_inference_cost,failure_case_analysis,hypothesis_support_assessment,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (analysis.id, analysis.project_id, analysis.run_id, analysis.spec_id, _json(analysis.baseline_metrics), _json(analysis.proposed_metrics), _json(analysis.effect_size), _json(analysis.confidence_intervals), _json(analysis.seed_level_results), _json(analysis.ablation_contributions), analysis.parameter_count_diff, analysis.flops_latency_diff, analysis.training_inference_cost, analysis.failure_case_analysis, analysis.hypothesis_support_assessment, _json_provenance(analysis.provenance))
+            "INSERT INTO statistical_analyses(id,project_id,run_id,spec_id,baseline_metrics_json,proposed_metrics_json,effect_size_json,confidence_intervals_json,seed_level_results_json,ablation_contributions_json,parameter_count_diff,flops_latency_diff,training_inference_cost,failure_case_analysis,hypothesis_support_assessment,provenance_json,decision_gates_json,statistical_tests_json,evidence_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (analysis.id, analysis.project_id, analysis.run_id, analysis.spec_id, _json(analysis.baseline_metrics), _json(analysis.proposed_metrics), _json(analysis.effect_size), _json(analysis.confidence_intervals), _json(analysis.seed_level_results), _json(analysis.ablation_contributions), analysis.parameter_count_diff, analysis.flops_latency_diff, analysis.training_inference_cost, analysis.failure_case_analysis, analysis.hypothesis_support_assessment, _json_provenance(analysis.provenance), _json(dict(analysis.decision_gates)), _json(dict(analysis.statistical_tests)), analysis.evidence_status)
         )
 
     def get_statistical_analysis(self, spec_id: str) -> StatisticalAnalysis | None:
@@ -671,12 +768,83 @@ class ResearchRepository:
     def save_experiment_report(self, report: ExperimentReport) -> None:
         self.execute(
             "INSERT INTO experiment_reports(id,project_id,run_id,analysis_id,literature_motivation,research_gap,hypothesis,proposed_method,implementation_diff,lineage,dataset_split,exact_commands_json,baseline_results_json,aggregated_results_json,uncertainty,ablations,robustness_tests,failed_runs,cost,limitations,reproducibility_instructions,decision,decision_evidence,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (report.id, report.project_id, report.run_id, report.analysis_id, report.literature_motivation, report.research_gap, report.hypothesis, report.proposed_method, report.implementation_diff, report.lineage, report.dataset_split, _json(report.exact_commands), _json(report.baseline_results), _json(report.aggregated_results), report.uncertainty, report.ablations, report.robustness_tests, report.failed_runs, report.cost, report.limitations, report.reproducibility_instructions, report.decision.value, report.decision_evidence, _json_provenance(report.provenance))
+            (report.id, report.project_id, report.run_id, report.analysis_id, report.literature_motivation, report.research_gap, report.hypothesis, report.proposed_method, report.implementation_diff, report.lineage, report.dataset_split, _json(report.exact_commands), _json(report.baseline_results), _json(report.aggregated_results), report.uncertainty, report.ablations, report.robustness_tests, report.failed_runs, report.cost, _json(report.limitations), report.reproducibility_instructions, report.decision.value, report.decision_evidence, _json_provenance(report.provenance))
         )
 
     def get_experiment_report(self, analysis_id: str) -> ExperimentReport | None:
         row = self.row("SELECT * FROM experiment_reports WHERE analysis_id=?", (analysis_id,))
         return _experiment_report(row) if row else None
+
+    def save_manuscript(self, manuscript: ManuscriptRecord) -> None:
+        self.execute(
+            "INSERT INTO manuscripts(id,project_id,run_id,title,status,decision,lineage_json,evidence_bundle_path,markdown_path,latex_path,bibtex_path,manifest_path,pdf_path,gaps_json,provenance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (manuscript.id, manuscript.project_id, manuscript.run_id, manuscript.title, manuscript.status, manuscript.decision, manuscript.lineage_json, manuscript.evidence_bundle_path, manuscript.markdown_path, manuscript.latex_path, manuscript.bibtex_path, manuscript.manifest_path, manuscript.pdf_path, manuscript.gaps_json, _json_provenance(manuscript.provenance), manuscript.created_at)
+        )
+
+    def latest_manuscript(self, project_id: str) -> ManuscriptRecord | None:
+        row = self.row("SELECT * FROM manuscripts WHERE project_id=? ORDER BY rowid DESC LIMIT 1", (project_id,))
+        if not row:
+            return None
+        return ManuscriptRecord(
+            id=row["id"], project_id=row["project_id"], run_id=row["run_id"], title=row["title"],
+            status=row["status"], decision=row["decision"], lineage_json=row["lineage_json"],
+            evidence_bundle_path=row["evidence_bundle_path"], markdown_path=row["markdown_path"],
+            latex_path=row["latex_path"], bibtex_path=row["bibtex_path"], manifest_path=row["manifest_path"],
+            pdf_path=row["pdf_path"], gaps_json=row["gaps_json"],
+            provenance=ArtifactProvenance(**json.loads(row["provenance_json"])), created_at=row["created_at"],
+        )
+
+    def save_finding(self, finding: ResearchFinding) -> None:
+        self.execute(
+            "INSERT INTO research_findings(id,project_id,run_id,status,question_id,candidate_id,methodology_freeze_id,"
+            "spec_id,analysis_id,report_id,hypothesis,expected_observation,implementation_digest,observed_outcome_json,"
+            "interpretation,uncertainty,fidelity,failure_classification,lesson,applicability,open_questions_json,"
+            "next_action,keywords_json,provenance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (finding.id, finding.project_id, finding.run_id, finding.status.value, finding.question_id, finding.candidate_id,
+             finding.methodology_freeze_id, finding.spec_id, finding.analysis_id, finding.report_id, finding.hypothesis,
+             finding.expected_observation, finding.implementation_digest, finding.observed_outcome_json, finding.interpretation,
+             finding.uncertainty, finding.fidelity, finding.failure_classification, finding.lesson, finding.applicability,
+             finding.open_questions_json, finding.next_action, finding.keywords_json, _json_provenance(finding.provenance),
+             finding.created_at),
+        )
+
+    def findings_for_project(self, project_id: str, limit: int = 100) -> list[ResearchFinding]:
+        rows = self.rows(
+            "SELECT * FROM research_findings WHERE project_id=? ORDER BY rowid DESC LIMIT ?", (project_id, limit)
+        )
+        return [_finding(row) for row in rows]
+
+    def findings_for_question(self, project_id: str, question_id: str, limit: int = 8) -> list[ResearchFinding]:
+        rows = self.rows(
+            "SELECT * FROM research_findings WHERE project_id=? AND question_id=? "
+            "ORDER BY CASE status WHEN 'refuted_hypothesis' THEN 0 WHEN 'implementation_failure' THEN 1 "
+            "WHEN 'inconclusive' THEN 2 ELSE 3 END, rowid DESC LIMIT ?",
+            (project_id, question_id, limit),
+        )
+        return [_finding(row) for row in rows]
+
+    def search_findings(self, project_id: str, terms: Sequence[str], limit: int = 8) -> list[ResearchFinding]:
+        """Lexical retrieval over the Findings Memory (simple + inspectable).
+
+        Matches any term against hypothesis/lesson/method keywords; failures
+        and refutations rank first so the generator sees what NOT to redo.
+        """
+        if not terms:
+            return []
+        clauses = " OR ".join(
+            "(hypothesis LIKE ? OR lesson LIKE ? OR keywords_json LIKE ?)" for _ in terms
+        )
+        params: list[str] = []
+        for term in terms:
+            like = f"%{term}%"
+            params.extend([like, like, like])
+        rows = self.rows(
+            "SELECT * FROM research_findings WHERE project_id=? AND (" + clauses + ") "
+            "ORDER BY CASE status WHEN 'refuted_hypothesis' THEN 0 WHEN 'implementation_failure' THEN 1 "
+            "WHEN 'inconclusive' THEN 2 ELSE 3 END, rowid DESC LIMIT ?",
+            (project_id, *params, limit),
+        )
+        return [_finding(row) for row in rows]
 
     def save_reinvention_analysis(self, analysis: ReinventionAnalysis) -> None:
         self.execute(
@@ -858,13 +1026,53 @@ def _execution_job(row: dict[str, Any]) -> ExecutionJob:
     return ExecutionJob(row["id"], row["project_id"], row["run_id"], row["spec_id"], row["worker"], row["stage"], RunStatus(row["status"]), row["started_at"], row["completed_at"], int(row["timeout_seconds"]), row["retry_policy"])
 
 def _execution_result(row: dict[str, Any]) -> ExecutionResult:
-    return ExecutionResult(row["id"], row["project_id"], row["run_id"], row["job_id"], int(row["exit_code"]), row["stdout"], row["stderr"], _loads(row["structured_metrics_json"], {}), _loads(row["gpu_telemetry_json"], {}), tuple(_loads(row["checkpoint_manifest_json"], [])), row["failure_classification"], _provenance(row["provenance_json"]))
+    return ExecutionResult(row["id"], row["project_id"], row["run_id"], row["job_id"], int(row["exit_code"]), row["stdout"], row["stderr"], _loads(row["structured_metrics_json"], {}), _loads(row["gpu_telemetry_json"], {}), tuple(_loads(row["checkpoint_manifest_json"], [])), row["failure_classification"], _provenance(row["provenance_json"]), command_json=str(row.get("command_json") or ""))
+
+def _finding(row: dict[str, Any]) -> ResearchFinding:
+    return ResearchFinding(
+        id=row["id"], project_id=row["project_id"], run_id=row["run_id"],
+        status=FindingStatus(str(row["status"])), question_id=row["question_id"],
+        candidate_id=row["candidate_id"], methodology_freeze_id=row["methodology_freeze_id"],
+        spec_id=row["spec_id"], analysis_id=row["analysis_id"], report_id=row["report_id"],
+        hypothesis=row["hypothesis"], expected_observation=row["expected_observation"],
+        implementation_digest=row["implementation_digest"], observed_outcome_json=row["observed_outcome_json"],
+        interpretation=row["interpretation"], uncertainty=row["uncertainty"], fidelity=row["fidelity"],
+        failure_classification=row["failure_classification"], lesson=row["lesson"],
+        applicability=row["applicability"], open_questions_json=row["open_questions_json"],
+        next_action=row["next_action"], keywords_json=row["keywords_json"],
+        provenance=ArtifactProvenance(**json.loads(row["provenance_json"])), created_at=row["created_at"],
+    )
+
 
 def _statistical_analysis(row: dict[str, Any]) -> StatisticalAnalysis:
-    return StatisticalAnalysis(row["id"], row["project_id"], row["run_id"], row["spec_id"], _loads(row["baseline_metrics_json"], {}), _loads(row["proposed_metrics_json"], {}), _loads(row["effect_size_json"], {}), _loads(row["confidence_intervals_json"], {}), tuple(_loads(row["seed_level_results_json"], [])), _loads(row["ablation_contributions_json"], {}), int(row["parameter_count_diff"]), float(row["flops_latency_diff"]) if row["flops_latency_diff"] is not None else None, float(row["training_inference_cost"]), row["failure_case_analysis"], row["hypothesis_support_assessment"], _provenance(row["provenance_json"]))
+    assessment = str(row["hypothesis_support_assessment"] or "")
+    return StatisticalAnalysis(
+        row["id"], row["project_id"], row["run_id"], row["spec_id"],
+        _loads(row["baseline_metrics_json"], {}), _loads(row["proposed_metrics_json"], {}),
+        _loads(row["effect_size_json"], {}), _loads(row["confidence_intervals_json"], {}),
+        tuple(_loads(row["seed_level_results_json"], [])), _loads(row["ablation_contributions_json"], {}),
+        int(row["parameter_count_diff"]),
+        float(row["flops_latency_diff"]) if row["flops_latency_diff"] is not None else None,
+        float(row["training_inference_cost"]), row["failure_case_analysis"], assessment,
+        _provenance(row["provenance_json"]),
+        decision_gates=_loads(row.get("decision_gates_json") or "{}", {}),
+        statistical_tests=_loads(row.get("statistical_tests_json") or "{}", {}),
+        # Pre-V13 rows never persisted the status: the assessment is the
+        # honest fallback rather than defaulting to insufficiency.
+        evidence_status=str(row.get("evidence_status") or assessment or "INSUFFICIENT_EVIDENCE"),
+    )
+
+def _report_limitations(value: Any) -> tuple[str, ...]:
+    """Limitations column: JSON list for new reports, legacy plain text for
+    pre-v15 rows. Never returns an invented entry."""
+    parsed = _loads(value, None)
+    if isinstance(parsed, list):
+        return tuple(str(item) for item in parsed if str(item).strip())
+    return (str(value),) if value else ()
+
 
 def _experiment_report(row: dict[str, Any]) -> ExperimentReport:
-    return ExperimentReport(row["id"], row["project_id"], row["run_id"], row["analysis_id"], row["literature_motivation"], row["research_gap"], row["hypothesis"], row["proposed_method"], row["implementation_diff"], row["lineage"], row["dataset_split"], tuple(_loads(row["exact_commands_json"], [])), _loads(row["baseline_results_json"], {}), _loads(row["aggregated_results_json"], {}), row["uncertainty"], row["ablations"], row["robustness_tests"], int(row["failed_runs"]), float(row["cost"]), row["limitations"], row["reproducibility_instructions"], ExperimentDecision(row["decision"]), row["decision_evidence"], _provenance(row["provenance_json"]))
+    return ExperimentReport(row["id"], row["project_id"], row["run_id"], row["analysis_id"], row["literature_motivation"], row["research_gap"], row["hypothesis"], row["proposed_method"], row["implementation_diff"], row["lineage"], row["dataset_split"], tuple(_loads(row["exact_commands_json"], [])), _loads(row["baseline_results_json"], {}), _loads(row["aggregated_results_json"], {}), row["uncertainty"], row["ablations"], row["robustness_tests"], int(row["failed_runs"]), float(row["cost"]), _report_limitations(row["limitations"]), row["reproducibility_instructions"], ExperimentDecision(row["decision"]), row["decision_evidence"], _provenance(row["provenance_json"]))
 
 
 def _reinvention_analysis(row: dict[str, Any]) -> ReinventionAnalysis:
@@ -1446,4 +1654,82 @@ ALTER TABLE experiment_specs ADD COLUMN interpretation_rules_json TEXT NOT NULL 
 
 _SCHEMA_V11 = """
 ALTER TABLE project_budgets ADD COLUMN token_ceiling INTEGER;
+"""
+
+# V12 (additive): durable manuscript records over one exact research lineage.
+_SCHEMA_V12 = """
+CREATE TABLE IF NOT EXISTS manuscripts(
+id TEXT PRIMARY KEY,
+project_id TEXT NOT NULL REFERENCES projects(id),
+run_id TEXT NOT NULL REFERENCES pipeline_runs(id),
+title TEXT NOT NULL,
+status TEXT NOT NULL,
+decision TEXT NOT NULL,
+lineage_json TEXT NOT NULL,
+evidence_bundle_path TEXT NOT NULL,
+markdown_path TEXT NOT NULL,
+latex_path TEXT NOT NULL,
+bibtex_path TEXT NOT NULL,
+manifest_path TEXT NOT NULL,
+pdf_path TEXT,
+gaps_json TEXT NOT NULL,
+provenance_json TEXT NOT NULL,
+created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS manuscripts_project_idx ON manuscripts(project_id, created_at);
+"""
+
+# V13 (additive): persist the analysis decision gates, statistical tests, and
+# evidence status so a re-fetched analysis remains interpretable downstream
+# (report writing, manuscript tables) without re-running the analyzer.
+_SCHEMA_V13 = """
+ALTER TABLE statistical_analyses ADD COLUMN decision_gates_json TEXT;
+ALTER TABLE statistical_analyses ADD COLUMN statistical_tests_json TEXT;
+ALTER TABLE statistical_analyses ADD COLUMN evidence_status TEXT;
+"""
+
+# V14 (additive): shared Findings Memory — every informative outcome (success,
+# failure, negative, inconclusive) persisted with exact lineage so later stages
+# retrieve failures and contradictions instead of rediscovering them.
+_SCHEMA_V14 = """
+CREATE TABLE IF NOT EXISTS research_findings(
+id TEXT PRIMARY KEY,
+project_id TEXT NOT NULL REFERENCES projects(id),
+run_id TEXT NOT NULL REFERENCES pipeline_runs(id),
+status TEXT NOT NULL,
+question_id TEXT NOT NULL,
+candidate_id TEXT NOT NULL,
+methodology_freeze_id TEXT NOT NULL,
+spec_id TEXT NOT NULL,
+analysis_id TEXT NOT NULL,
+report_id TEXT NOT NULL,
+hypothesis TEXT NOT NULL,
+expected_observation TEXT NOT NULL,
+implementation_digest TEXT NOT NULL,
+observed_outcome_json TEXT NOT NULL,
+interpretation TEXT NOT NULL,
+uncertainty TEXT NOT NULL,
+fidelity TEXT NOT NULL,
+failure_classification TEXT NOT NULL,
+lesson TEXT NOT NULL,
+applicability TEXT NOT NULL,
+open_questions_json TEXT NOT NULL,
+next_action TEXT NOT NULL,
+keywords_json TEXT NOT NULL,
+provenance_json TEXT NOT NULL,
+created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS research_findings_project_idx ON research_findings(project_id, status, created_at);
+"""
+
+# V15 (additive): persist the executor's exact argv so the manuscript
+# Appendices can list exact commands from the durable record instead of
+# reconstructing (or inventing) them.
+_SCHEMA_V15 = """
+ALTER TABLE execution_results ADD COLUMN command_json TEXT NOT NULL DEFAULT '';
+"""
+
+_SCHEMA_V16 = """
+ALTER TABLE projects ADD COLUMN state_db_path TEXT;
+UPDATE projects SET state_db_path = (SELECT hex(randomblob(0))) WHERE 0; -- no-op placeholder
 """

@@ -73,12 +73,17 @@ class ModelRouter:
                     break
                 self._record_usage(project_id, run_id, session_id, prompt_version, operation, ModelRole(role), provider_name, model, result.prompt_tokens, result.completion_tokens, result.estimated_cost, result.currency, result.request_id, (time.perf_counter() - started) * 1000, index + int(result.raw.get("retry_count") or 0), structured_output_status if response_format else None)
                 finish_reason = str(result.raw.get("finish_reason") or "")
-                if finish_reason == "length" and attempt_cap is not None and attempt < 2:
+                # The applied cap is the call-site/config cap when one was set;
+                # adapters that must impose their own fallback cap (Anthropic
+                # requires an explicit max_tokens) report it back so the
+                # self-heal can still double it.
+                applied_cap = attempt_cap if attempt_cap is not None else result.raw.get("effective_max_tokens")
+                if finish_reason in ("length", "max_tokens") and isinstance(applied_cap, int) and attempt < 2:
                     logger.warning(
-                        "Output truncated at %d tokens (finish_reason=length); retrying with %d.",
-                        attempt_cap, attempt_cap * 2,
+                        "Output truncated at %d tokens (finish_reason=%s); retrying with %d.",
+                        applied_cap, finish_reason, applied_cap * 2,
                     )
-                    attempt_cap = attempt_cap * 2
+                    attempt_cap = applied_cap * 2
                     continue
                 return result
             else:  # pragma: no cover - exhausted truncation retries

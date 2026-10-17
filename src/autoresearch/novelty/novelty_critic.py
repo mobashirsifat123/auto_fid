@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from statistics import mean
 from uuid import uuid4
@@ -10,6 +11,7 @@ from autoresearch.domain.models import (
     ArtifactProvenance,
     NoveltyCandidate,
     NoveltyCritique,
+    PriorArtAssessment,
 )
 from autoresearch.providers.capabilities import ModelRole
 from autoresearch.providers.router import ModelRouter
@@ -72,12 +74,12 @@ class ScientificCritic:
     def __init__(self, router: ModelRouter) -> None:
         self.router = router
 
-    async def evaluate(self, candidate: NoveltyCandidate) -> NoveltyCritique:
+    async def evaluate(self, candidate: NoveltyCandidate, *, prior_art: PriorArtAssessment | None = None) -> NoveltyCritique:
         """Evaluate using ensemble of 3 reviewer perspectives and aggregate."""
-        critiques = []
-        for perspective in _CRITIC_PERSPECTIVES:
-            critique = await self._single_evaluate(candidate, perspective)
-            critiques.append(critique)
+        critiques = await asyncio.gather(*(
+            self._single_evaluate(candidate, perspective, prior_art=prior_art)
+            for perspective in _CRITIC_PERSPECTIVES
+        ))
 
         # Aggregate scores: weighted mean across ensemble (N5) & agreement (N6)
         score_keys = [
@@ -120,7 +122,7 @@ class ScientificCritic:
         provider, model = self.router.identity(ModelRole.SCIENTIFIC_CRITIC)
         provenance = ArtifactProvenance.create(
             project_id=candidate.project_id, run_id=candidate.run_id,
-            source_evidence=[],
+            source_evidence=[prior_art.id] if prior_art else [],
             provider=provider, model=model,
             prompt_version=PROMPT_VERSION,
             content={**aggregated, "agreement": agreement, "perspectives": [c["tag"] for c in critiques],
@@ -145,7 +147,7 @@ class ScientificCritic:
             provenance=provenance,
         )
 
-    async def _single_evaluate(self, candidate: NoveltyCandidate, perspective: dict) -> dict:
+    async def _single_evaluate(self, candidate: NoveltyCandidate, perspective: dict, *, prior_art: PriorArtAssessment | None = None) -> dict:
         """Run one critic evaluation from a specific perspective."""
         score_keys = [
             "novelty_score", "significance_score", "causal_plausibility_score",
@@ -173,7 +175,14 @@ class ScientificCritic:
                     f"Method: {candidate.method}\n"
                     f"Mechanism: {candidate.causal_mechanism}\n"
                     f"Falsification condition: {candidate.falsification_condition}\n"
-                    f"Expected effect: {candidate.expected_effect}\n\n{instruction}"
+                    f"Expected effect: {candidate.expected_effect}\n"
+                    f"Closest-method difference: {candidate.difference_from_existing}\n"
+                    f"Minimum experiment: {candidate.minimum_validating_experiment}\n"
+                    + (f"Retrieved prior-art assessment (bounded, not proof of novelty):\n"
+                       f"Overlap: {prior_art.overlap_status.value}\n"
+                       f"Comparison: {prior_art.mechanism_comparison}\n"
+                       f"Unresolved: {prior_art.unresolved_overlap}\n" if prior_art else "")
+                    + f"\n{instruction}"
                 ),
             },
         ]

@@ -47,8 +47,10 @@ The experiment skill has 5 ordered steps. Always follow them in order.
 
 ### Step 1 — Plan (no code runs)
 
-Translates the novelty candidate into a complete, reproducible experiment
-specification with adversarial falsification analysis and power analysis.
+Produces one concise experiment specification for the smallest decisive test,
+then runs one independent adversarial check. That check feeds the final
+falsification condition, confounders, and interpretation rules. Power estimates
+require a standardized effect-size assumption; missing variance is explicit.
 
 ```bash
 "${AUTORESEARCH_BIN:-autoresearch}" skill experiment plan \
@@ -59,10 +61,35 @@ specification with adversarial falsification analysis and power analysis.
 statistical_plan, ablations) + `approval` (worker, actions, checksum, budget).
 **Show this to the user verbatim before any approval.**
 
-### Step 2 — Validate (no code runs)
+### Step 1b — Implement (research code generation; no execution)
 
+If no `scripts/run_experiment.py` exists in the planned repository, the
+backend generates the implementation from the frozen methodology through the
+model router and statically verifies it — deterministically:
+
+- syntax + stdlib-only imports (worker policy),
+- exact `IDENTITY` block, declared seeds, required artifact types,
+- measurement-contract emission (`json.dumps` document with `seeds`),
+- **mechanism coverage**: methodology components mapped to named code
+  symbols; coverage < 75% stays `MECHANISM_PARTIAL`, never rounded up.
+
+Bounded repair loop (≤3 attempts) feeds verification failures back. The
+workflow's design stage runs this automatically; manual:
+
+```bash
+"${AUTORESEARCH_BIN:-autoresearch}" skill experiment implement \
+  --candidate-id "<candidate_id>"
+```
+
+Fidelity is labelled (`STATIC_VERIFIED` here; `SMOKE`/`EXPLORATORY`/
+`CONFIRMATORY` attach at execution). A failed verification is recorded as an
+`implementation_failure` finding — never masked by silently degrading.
+
+### Step 2 — Validate (no code runs)
 Checks that the execution environment (Python version, dependencies, datasets)
 is ready. Does not execute experiment code.
+Reuses the saved specification and environment snapshot; it never replans or
+changes the approved checksum. Request a new plan explicitly when inputs change.
 
 ```bash
 "${AUTORESEARCH_BIN:-autoresearch}" skill experiment validate \
@@ -107,12 +134,12 @@ Only valid after Step 3 `--accept` has been recorded.
 Writes the scientific report: frequentist + Bayesian analysis, validity
 assessment, and final decision.
 
-**Boundary (current release):** the artifact-ingestion and statistical-analysis
-step is not yet wired into the CLI, so a completed execution is reported as
-`executed_analysis_pending` and this command refuses with
-`insufficient_evidence` until an analyzed report exists. Report that state to
-the user honestly; never infer a decision from an exit code or fabricate
-metrics.
+Analysis runs automatically after an approved execution completes: the
+worker's measured artifacts are ingested, identity-validated, and analyzed
+deterministically before this step. If integrity validation rejected the
+measurements (e.g. FIXTURE-labelled artifacts, missing identity, incomplete
+seeds), this command refuses with `insufficient_evidence` and the recorded
+reason — never a fabricated decision.
 
 ```bash
 "${AUTORESEARCH_BIN:-autoresearch}" skill experiment report \
@@ -134,6 +161,31 @@ metrics.
 Exit codes: `0` success · `1` internal · `2` usage · `3` approval required ·
 `4` not found · `5` insufficient evidence · `6` worker unavailable.
 
+## Progress reporting
+
+While the skill runs, the CLI writes one JSON line per completed step to
+**stderr** (stdout stays the single final result):
+
+```json
+{"progress": {"stage": "review.papers", "percent": 40, "completed": 8,
+  "total": 20, "detail": "8/20 papers reviewed",
+  "remaining": ["novelty", "experiment", "manuscript"]}}
+```
+
+Surface every event to the user as: `stage: N% (k/total) — remaining: ...`.
+Percentages are completed steps / total steps, NEVER time estimates. Do not
+invent a percentage before a progress line arrives; report stalls honestly.
+
+
+- The 5 steps are the progress bar. Announce `[k/5] <step>` before running
+  each step's command (e.g. `[3/5] approve`) and report the outcome before
+  moving on.
+- While `execute` (step 4) is in flight — and whenever the user asks — poll
+  `"${AUTORESEARCH_BIN:-autoresearch}" skill status` (read-only; narrow with
+  `--project "<project_id>"`) instead of guessing from elapsed time.
+- The user can invoke `/status` in any session at any time; it never
+  interferes with a running step.
+
 ## Interpreting the JSON results
 
 ### `plan` output
@@ -154,6 +206,16 @@ Exit codes: `0` success · `1` internal · `2` usage · `3` approval required ·
   `implementation_failure`, `optimization_failure`, `data_limitation`,
   `evaluation_artifact`, `cost_prohibitive`, `domain_specific`, `mechanism_contradicted`.
 - `decision_evidence` — the specific evidence for the decision.
+- `limitations` — at least 3 study-limitation rows (measurement provenance,
+  dataset/split/seed bounds, unrun ablations/robustness). The manuscript
+  Discussion lists them; observations and interpretations stay in separate
+  fields and are never merged.
+- `exact_commands` — the executor's recorded argv per job. The manuscript
+  Appendices list these verbatim; when none were recorded, that absence is
+  reported honestly, never reconstructed.
+
+Raw seed observations (checksummed) feed the manuscript Appendices
+("Raw seed metrics") through the evidence bundle.
 
 ### What to tell the user after each step
 
@@ -167,6 +229,10 @@ Exit codes: `0` success · `1` internal · `2` usage · `3` approval required ·
 
 ## Quality rules
 
+- Planning has no default runtime limit. Let the design and adversarial check
+  finish; do not impose token, reasoning, or runtime caps unless the user asks.
+  `--max-runtime-seconds N` is opt-in. Never duplicate an active run. Execution
+  still requires approval of the exact specification and compute budget.
 - **NEVER run `execute` without a recorded `--accept` approval and without
   the user's explicit confirmation of the exact action plan.**
 - **NEVER pass the checksum from one candidate's spec to a different candidate's
@@ -179,3 +245,6 @@ Exit codes: `0` success · `1` internal · `2` usage · `3` approval required ·
   claim the experiment succeeded — report the failure honestly.
 - Surface `decision_evidence` to the user verbatim; do not paraphrase the
   scientific conclusions.
+- The report must carry at least 3 study-limitation rows so the manuscript
+  Discussion can list them (template requirement); every row is an
+  objective fact about the run, never an invented weakness.

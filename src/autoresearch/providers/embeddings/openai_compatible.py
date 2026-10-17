@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
 from ..config import ProviderConfig
+from ..credentials import resolve_api_key
 from ..errors import ErrorKind, ProviderError, kind_for_status
 from ..llm.base import HealthResult, ModelInfo
 from ..llm.http_base import AsyncRateLimiter
@@ -32,9 +32,7 @@ class ExternalEmbeddingProvider:
         self._client = httpx.AsyncClient(base_url=config.base_url.rstrip("/"), timeout=httpx.Timeout(config.total_timeout, connect=config.connect_timeout, read=config.read_timeout), transport=transport)
 
     def _headers(self) -> dict[str, str]:
-        key = os.getenv(self.config.api_key_env, "")
-        if not key:
-            raise ProviderError(f"Required environment variable '{self.config.api_key_env}' is not set.", ErrorKind.AUTHENTICATION, self.name)
+        key = resolve_api_key(self.config)
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     async def embed_batch(self, *, model: str, texts: Sequence[str]) -> EmbeddingResult:

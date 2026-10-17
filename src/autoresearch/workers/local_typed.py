@@ -59,6 +59,30 @@ class LocalTypedWorker:
             raise ValueError("unsafe_execution_request: repository is outside worker workspace")
         return repo
 
+    def _result_store_path(self, spec: ExperimentSpec, job_id: str) -> Path:
+        return self._workspace(spec) / "run_outputs" / f"worker_result_{job_id}.json"
+
+    def _persist_result(self, spec: ExperimentSpec, job_id: str, payload: dict[str, object]) -> None:
+        """Persist the job result so a later process can reuse the measured
+        stdout deterministically instead of returning an stdout-less job row
+        (worker_jobs stores bookkeeping only, never outputs)."""
+        try:
+            path = self._result_store_path(spec, job_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass  # bookkeeping only — the in-memory result is returned regardless
+
+    def _stored_result(self, spec: ExperimentSpec, job_id: str) -> dict[str, object] | None:
+        try:
+            path = self._result_store_path(spec, job_id)
+            if not path.is_file():
+                return None
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) and "stdout" in payload else None
+
     def submit(self, spec: ExperimentSpec, actions: tuple[ExecutionAction, ...], *, approved_checksum: str, timeout_seconds: int = 3600) -> WorkerSubmission:
         expected = specification_checksum(spec, actions, self.worker_id)
         if approved_checksum != expected:
@@ -83,7 +107,13 @@ class LocalTypedWorker:
         job = self.repository.worker_job(submission.job_id)
         assert job is not None
         if job["state"] == "COMPLETED":
-            return {**job, "job_id": job["id"]}
+            stored = self._stored_result(spec, submission.job_id)
+            if stored is not None:
+                return stored
+            # The result payload died with the previous process (results are
+            # process-local; worker_jobs keeps bookkeeping only). Re-execute the
+            # SAME approved deterministic action rather than returning an
+            # stdout-less row the measurement ingester cannot use.
         lease_id = uuid4().hex
         now = utc_now()
         self.repository.save_worker_job({**job, "lease_id": lease_id, "state": "LEASED", "attempt": int(job["attempt"]) + 1, "updated_at": now, "heartbeat_at": now, "lease_expires_at": now})
@@ -124,7 +154,10 @@ class LocalTypedWorker:
         self.repository.save_worker_job({**current, "state": final_state, "updated_at": utc_now(), "heartbeat_at": utc_now(), "error": {"category": errors[-1]} if final_state == "FAILED" and errors else None})
         self.repository.append_worker_transition(spec.run_id, "RUNNING", final_state, reason="process group finished", worker_id=self.worker_id, attempt=int(current["attempt"]))
         self._event(spec.run_id, "job.completed" if final_state == "COMPLETED" else "job.canceled" if final_state == "CANCELED" else "run.failed", {"job_id": submission.job_id, "state": final_state, "exit_code": exit_code})
-        return {"job_id": submission.job_id, "state": final_state, "exit_code": exit_code, "stdout": "".join(output), "stderr": "".join(errors), "checksum": approved_checksum}
+        payload: dict[str, object] = {"job_id": submission.job_id, "state": final_state, "exit_code": exit_code, "attempt": int(current.get("attempt") or 0), "stdout": "".join(output), "stderr": "".join(errors), "checksum": approved_checksum}
+        if final_state == "COMPLETED":
+            self._persist_result(spec, submission.job_id, payload)
+        return payload
 
     async def heartbeat(self, job_id: str) -> dict[str, object] | None:
         job = self.repository.worker_job(job_id)

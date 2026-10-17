@@ -1,0 +1,75 @@
+# Copy to .autoresearch/config.toml. Store API-key values only in environment variables.
+# kind may be "openai_compatible", "anthropic", or "gemini". For Anthropic-
+# protocol providers the key also resolves ambiently from an agent session
+# (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / connector settings), so skills
+# run inside a session without a separate export.
+
+[providers.reasoning]
+kind = "openai_compatible"
+base_url = "https://api.example.com/v1"
+api_key_env = "AUTORESEARCH_LLM_API_KEY"
+# Throughput knobs: parallel in-flight requests and requests/second. A 429
+# pauses every in-flight slot for the Retry-After window (no retry storms),
+# then the call retries with backoff. Set max_concurrency above concurrency
+# to let the client self-tune (AIMD): it probes upward additively on success
+# and halves on throttle, so any future plan headroom is exploited without
+# config changes. Reasoning and output tokens have no application cap by default.
+concurrency = 8
+max_concurrency = 16
+requests_per_second = 6
+max_retries = 2
+# Zero disables application read/total deadlines so slow reasoning can finish.
+read_timeout = 0
+total_timeout = 0
+
+[providers.embeddings]
+kind = "external_embeddings"
+base_url = "https://api.example.com/v1"
+api_key_env = "AUTORESEARCH_EMBEDDING_API_KEY"
+embedding_dimension = 1536
+embedding_batch_size = 64
+concurrency = 4
+requests_per_second = 2
+
+[models.literature_extraction]
+provider = "reasoning"
+model = "provider-model-id"
+# Output budget is UNLIMITED by default (the provider uses the model maximum).
+# Reasoning models spend hidden reasoning tokens against the completion
+# budget, so a small cap truncates structured JSON. Only set a cap for cost
+# control; if a cap truncates a payload once, the router retries with it
+# doubled automatically. Overall spend is bounded by the project budget
+# (`--max-cost-usd`), not by output caps.
+# max_output_tokens = 8192
+
+[models.research_reasoning]
+provider = "reasoning"
+model = "provider-model-id"
+
+[models.scientific_critic]
+provider = "reasoning"
+model = "provider-model-id"
+
+[models.embeddings]
+provider = "embeddings"
+model = "provider-embedding-model-id"
+
+[research]
+# No aggregate token ceiling, including when the shell sets a global default.
+# An explicit --max-tokens still sets a project-specific budget if requested.
+max_tokens = 0
+
+# Quality-width knobs (all default ON): each adds PARALLEL width — more
+# tokens and wider coverage — without adding serial latency. Every one
+# degrades gracefully under partial failure.
+# Parallel complementary perspectives for search-strategy generation
+# (1..8; the union is deduplicated).
+discovery_query_perspectives = 3
+# OpenAlex citation chaining: pull forward/backward citation neighbors of
+# the top-ranked anchors into the discovery candidate pool (zero tokens).
+discovery_citation_expansion = true
+discovery_citation_anchors = 5
+discovery_citation_neighbors = 10
+# Dual-leg parallel extraction per paper review, merged with deduplication.
+# A failing leg degrades to the survivor; set false for the single-pass cost.
+review_ensemble = true

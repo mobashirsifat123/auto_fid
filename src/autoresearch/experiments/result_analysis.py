@@ -3,11 +3,29 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 from statistics import mean, stdev
 from uuid import uuid4
 
 from autoresearch.domain.models import ArtifactProvenance, ExecutionResult, ExperimentSpec, StatisticalAnalysis
 from autoresearch.experiments.integrity import IntegrityFailure, ProvenanceType, decision_from_gates, validate_artifact_contract, validate_identity
+
+
+def canonical_metric_name(name: object) -> str:
+    """Spec planners write human-readable metric descriptors ("score (PRIMARY: ...)")
+    while implementations emit bare identifiers ("score"). Canonicalize for matching."""
+    return re.sub(r"\s*\(.*?\)\s*$", "", str(name).strip()).lower()
+
+
+def _resolve_document_metric(metric: str, left: dict, right: dict) -> str | None:
+    """Resolve a spec metric descriptor to the measurement document's emitted key."""
+    if metric in left and metric in right:
+        return metric
+    canon = canonical_metric_name(metric)
+    for key in left:
+        if key in right and canonical_metric_name(key) == canon:
+            return str(key)
+    return None
 
 
 def paired_effects(baseline: list[float], proposed: list[float]) -> dict[str, float | int | str]:
@@ -75,9 +93,18 @@ class StatisticalAnalyzer:
         intervals: dict[str, tuple[float, float]] = {}
         tests: dict[str, object] = {}
         gates: dict[str, bool | None] = {}
+        sample_left = dict(seed_rows[0].get("baseline") or {}) if seed_rows else {}
+        sample_right = dict((seed_rows[0].get("candidate") or seed_rows[0]) or {}) if seed_rows else {}
+        resolved_keys: dict[str, str] = {}
+        for metric in spec.metrics:
+            key = _resolve_document_metric(metric, sample_left, sample_right)
+            if key is None:
+                raise IntegrityFailure("INCOMPLETE_EXPERIMENT")
+            resolved_keys[metric] = key
         for metric in spec.metrics:
             before: list[float] = []
             after: list[float] = []
+            document_key = resolved_keys[metric]
             for row in seed_rows:
                 seed = int(row.get("seed", -1))
                 validate_identity(row.get("identity", identity), spec, seed=seed)
@@ -85,9 +112,9 @@ class StatisticalAnalyzer:
                     raise IntegrityFailure("FIXTURE_PROHIBITED")
                 left = row.get("baseline", {})
                 right = row.get("candidate", row)
-                if not isinstance(left, dict) or not isinstance(right, dict) or metric not in left or metric not in right:
+                if not isinstance(left, dict) or not isinstance(right, dict) or document_key not in left or document_key not in right:
                     raise IntegrityFailure("INCOMPLETE_EXPERIMENT")
-                before.append(float(left[metric])); after.append(float(right[metric]))
+                before.append(float(left[document_key])); after.append(float(right[document_key]))
             summary = paired_effects(before, after)
             test = exact_wilcoxon_two_sided(before, after)
             if test["status"] != "VALID":

@@ -52,11 +52,13 @@ def provider_config(name: str, raw: dict[str, Any]) -> ProviderConfig:
         api_key_env=str(raw.get("api_key_env") or ""),
         capabilities=capabilities,
         connect_timeout=float(raw.get("connect_timeout", 5.0)),
-        read_timeout=float(raw.get("read_timeout", 120.0)),
-        total_timeout=float(raw.get("total_timeout", 180.0)),
+        read_timeout=float(raw.get("read_timeout", 0.0)),
+        total_timeout=float(raw.get("total_timeout", 0.0)),
         max_retries=int(raw.get("max_retries", 2)),
         concurrency=int(raw.get("concurrency", 4)),
+        max_concurrency=int(raw["max_concurrency"]) if raw.get("max_concurrency") is not None else None,
         requests_per_second=float(raw["requests_per_second"]) if raw.get("requests_per_second") is not None else None,
+        thinking_budget=int(raw["thinking_budget"]) if raw.get("thinking_budget") is not None else None,
         embedding_dimension=int(raw["embedding_dimension"]) if raw.get("embedding_dimension") is not None else None,
         embedding_batch_size=int(raw.get("embedding_batch_size", 64)),
         structured_output_mode=str(raw.get("structured_output_mode", "json_schema")),
@@ -93,11 +95,53 @@ def build_assignments(document: dict[str, Any]) -> dict[ModelRole, ModelAssignme
     return assignments
 
 
-def build_router(path: Path, *, usage_sink: UsageSink | None = None, budget_guard: ProviderBudgetGuard | None = None) -> ModelRouter:
-    # A missing provider document is a valid local empty state. Keep the API,
-    # projects, sessions, tools, and durable inspection usable; model-backed
-    # operations will report an explicit unavailable capability when invoked.
-    if not path.exists():
-        return ModelRouter(ProviderRegistry(), {}, usage_sink=usage_sink, budget_guard=budget_guard)
+def _autodetected_document() -> dict[str, Any] | None:
+    """Synthesize a provider document from the OpenCode session's own
+    credentials (no config file needed): the skills follow the session's AI
+    model provider automatically. Returns None when nothing is usable."""
+    from .credentials import detect_session_provider
+
+    detected = detect_session_provider()
+    if not detected:
+        return None
+    roles = {
+        "literature_extraction": "literature_extraction",
+        "research_reasoning": "research_reasoning",
+        "scientific_critic": "scientific_critic",
+    }
+    models = detected.get("models") or {}
+    provider = "reasoning"
+    document: dict[str, Any] = {
+        "providers": {
+            provider: {
+                "kind": str(detected["kind"]),
+                "base_url": str(detected["base_url"]),
+                "api_key_env": f"OPENCODE_SESSION_{str(detected['integration_id']).upper().replace('-', '_')}",
+            }
+        },
+        "models": {
+            role_name: {
+                "provider": provider,
+                "model": str(models.get(key) or models.get("research_reasoning") or ""),
+            }
+            for role_name, key in roles.items()
+        },
+    }
+    if detected.get("structured_output_mode"):
+        document["providers"][provider]["structured_output_mode"] = str(detected["structured_output_mode"])
+    return document
+
+
+def build_router(path: Path, *, usage_sink: UsageSink | None = None, budget_guard: ProviderBudgetGuard | None = None, auto_provider: bool = False) -> ModelRouter:
+    # A missing provider document is a valid local empty state UNLESS the
+    # OpenCode session carries a usable credential: then the skills
+    # auto-follow the session's model provider (owner requirement — no
+    # separate API-key setup when running inside an agent session).
+    if not path.exists() or auto_provider:
+        detected = _autodetected_document()
+        if detected:
+            return ModelRouter(build_registry(detected), build_assignments(detected), usage_sink=usage_sink, budget_guard=budget_guard)
+        if not path.exists():
+            return ModelRouter(ProviderRegistry(), {}, usage_sink=usage_sink, budget_guard=budget_guard)
     document = load_provider_document(path)
     return ModelRouter(build_registry(document), build_assignments(document), usage_sink=usage_sink, budget_guard=budget_guard)

@@ -185,6 +185,19 @@ def format_evidence_context(context: dict[str, Any] | None) -> str:
             f"paper_ids={prior.get('paper_ids')} overlap_status={prior.get('overlap_status')} "
             f"comparison: {prior.get('mechanism_comparison')}"
         )
+    findings = context.get("findings_memory") or []
+    if findings:
+        lines = [
+            f"- [{f['finding_id']}] status={f['status']} hypothesis='{f['hypothesis']}' "
+            f"outcome={f.get('observed_outcome') or {}} applicability='{f['applicability']}' "
+            f"lesson='{f['lesson']}' next_action='{f['next_action']}'"
+            for f in findings
+        ]
+        parts.append(
+            "Findings Memory — prior experimental outcomes for this question, INCLUDING failures and refutations. "
+            "Do NOT repropose a mechanism that a finding refuted under matching applicability conditions "
+            "without an explicit mechanism change:\n" + "\n".join(lines)
+        )
     methodology = context.get("methodology")
     if methodology:
         predicted = methodology.get("predicted_observations")

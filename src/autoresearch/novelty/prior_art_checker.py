@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from autoresearch.domain.models import (
     NoveltyCandidate,
     PriorArtAssessment,
     PriorArtStatus,
+    content_checksum,
     utc_now,
 )
 from autoresearch.papers.search_pipeline import StudySearchPipeline
@@ -31,7 +33,32 @@ PRIOR_ART_SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPT_VERSION = "prior-art-v2"
+PROMPT_VERSION = "prior-art-v3"
+
+
+def _candidate_queries(candidate: NoveltyCandidate, seed: Any) -> tuple[str, ...]:
+    """Six complementary prior-art queries per candidate, including
+    cross-domain transfer probes grounded in the seed's topic and datasets.
+    Retrieval width is the novelty-check ceiling: a missed paper is the #1
+    source of a false `potentially_novel`."""
+    topic = " ".join(str(getattr(seed, "topic", "") or "").split())
+    dataset = next(iter(getattr(seed, "datasets", ()) or ()), "")
+    raw = [
+        candidate.method[:200],
+        f"{candidate.causal_mechanism[:200]} machine learning",
+        f"{candidate.difference_from_existing[:200]} method",
+        f"{candidate.causal_mechanism[:160]} applied to {topic}" if topic else "",
+        f"{candidate.method[:160]} {dataset}" if dataset else "",
+        f"{candidate.causal_mechanism[:160]} {topic}" if topic else "",
+    ]
+    seen: set[str] = set()
+    queries: list[str] = []
+    for query in raw:
+        compact = " ".join(query.split())
+        if compact and compact.lower() not in seen:
+            seen.add(compact.lower())
+            queries.append(compact)
+    return tuple(queries)
 
 
 class EvidenceBackedPriorArtChecker:
@@ -53,35 +80,44 @@ class EvidenceBackedPriorArtChecker:
                 internal_evidence.append((len(terms & evidence_terms), claim))
         internal_selected = [claim for score, claim in sorted(internal_evidence, key=lambda item: (-item[0], item[1]["id"])) if score > 0][:12]
 
-        # Step 2: External prior-art search using search pipeline sources directly
-        import asyncio
+        # Step 2: External prior-art search — ALL sources × complementary
+        # queries (incl. cross-domain probes), fetched concurrently. Wider
+        # retrieval at the same wall-clock; every source failure degrades to
+        # the other results instead of shrinking the whole fan-out.
+        seed = repository.get_seed(candidate.project_id) if repository is not None else None
+        search_queries = _candidate_queries(candidate, seed)
         external_results: list[dict] = []
-        search_queries = [
-            candidate.method[:200],
-            f"{candidate.causal_mechanism[:200]} machine learning",
-            f"{candidate.difference_from_existing[:200]} method",
-        ]
         if self.search_pipeline and hasattr(self.search_pipeline, 'sources') and self.search_pipeline.sources:
-            external_tasks = []
-            for source in self.search_pipeline.sources[:2]:
-                for query in search_queries:
-                    if not query.strip():
-                        continue
-                    external_tasks.append(source.search(query, limit=5))
+            external_tasks = [
+                source.search(query, limit=8)
+                for source in self.search_pipeline.sources
+                for query in search_queries
+            ]
             if external_tasks:
                 ext_results = await asyncio.gather(*external_tasks, return_exceptions=True)
+                seen_titles: set[str] = set()
                 for result in ext_results:
                     if isinstance(result, Exception):
                         continue
-                    for paper in getattr(result, 'papers', [])[:5]:
-                        paper_id = getattr(paper, 'id', None) or str(uuid4().hex)[:24]
+                    for paper in getattr(result, 'papers', [])[:8]:
+                        title_key = " ".join(re.findall(r"[a-z0-9]+", getattr(paper, 'title', '').lower()))
+                        if not title_key or title_key in seen_titles:
+                            continue
+                        seen_titles.add(title_key)
                         external_results.append({
-                            "paper_id": paper_id,
+                            # Deterministic identity (source|title): the same
+                            # paper resolves to the same id across runs, so
+                            # closest_paper_ids and ledger provenance stay
+                            # reproducible instead of re-randomized per run.
+                            "paper_id": content_checksum(
+                                f"{getattr(result, 'source', 'external_search')}|{getattr(paper, 'title', '')}"
+                            )[:24],
                             "title": getattr(paper, 'title', ''),
                             "year": getattr(paper, 'year', None),
                             "abstract": (getattr(paper, 'abstract', '') or '')[:2000],
                             "source": getattr(result, 'source', 'external_search'),
                         })
+                del external_results[40:]
 
         # Combine evidence contexts
         closest_paper_ids = list(dict.fromkeys(
